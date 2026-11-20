@@ -285,6 +285,7 @@ async function buildAuthenticatedLoginPayload(userId, req = null) {
           posMode: true,
           posModeConfigured: true,
           name: true,
+          slug: true,
           productTier: true,
           manufacturingWorkflow: true,
           isSandbox: true,
@@ -292,8 +293,10 @@ async function buildAuthenticatedLoginPayload(userId, req = null) {
       });
       responseUser.posMode = companyRow?.posMode || 'retail';
       responseUser.posModeConfigured = Boolean(companyRow?.posModeConfigured);
+      responseUser.companySlug = companyRow?.slug || null;
       responseUser.company = {
         id: prismaUser.companyId,
+        slug: companyRow?.slug || null,
         posMode: companyRow?.posMode || 'retail',
         posModeConfigured: Boolean(companyRow?.posModeConfigured),
         name: companyRow?.name || '',

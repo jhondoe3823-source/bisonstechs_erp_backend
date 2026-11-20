@@ -348,7 +348,7 @@ const getProductStock = async (req, res) => {
         },
       },
       include: {
-        product: { select: { id: true, name: true, sku: true, unit: true, currentStock: true, availableStock: true } },
+        product: { select: { id: true, name: true, sku: true, stockUnitName: true, currentStock: true, availableStock: true } },
         location: { select: { id: true, name: true, code: true } },
       },
     });

@@ -21,6 +21,7 @@ const {
 } = require('../services/productUnitService');
 const { toNumber, roundTo, MOVEMENT_TYPES } = require('../services/inventoryMath');
 const { adjustBatchStock } = require('../services/productBatchService');
+const { scheduleProductStockAlerts } = require('../services/stockAlertService');
 
 // ============================================================
 // @desc    Stock in/out reason catalog (for UI)
@@ -369,6 +370,8 @@ const addStock = async (req, res) => {
       where: { id: productId, companyId },
     });
 
+    scheduleProductStockAlerts(productId, { companyId });
+
     res.status(201).json({
       success: true,
       message: result.journalEntry
@@ -519,6 +522,8 @@ const removeStock = async (req, res) => {
     const updatedProduct = await prisma.product.findFirst({
       where: { id: productId, companyId },
     });
+
+    scheduleProductStockAlerts(productId, { companyId });
 
     res.status(201).json({
       success: true,

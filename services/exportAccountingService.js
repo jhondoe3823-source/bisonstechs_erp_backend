@@ -529,7 +529,7 @@ async function postCommercialInvoice(tx, {
 
   const when = invoiceDate ? new Date(invoiceDate) : dispatch.dispatchDate || new Date();
   const fiscalYearId = await resolveExportFiscalYear(companyId, when, tx);
-  const invoiceNumber = await nextSalesInvoiceNumber(tx, 'ECI');
+  const invoiceNumber = await nextSalesInvoiceNumber(tx, 'ECI', companyId);
   const dueDate = new Date(when);
   dueDate.setDate(dueDate.getDate() + 30);
 

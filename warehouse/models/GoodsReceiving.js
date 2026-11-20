@@ -10,16 +10,7 @@ const {
   buildCurrencyPersistFields,
   resolveTransactionCurrency,
 } = require('../../utils/multiCurrency');
-
-function generateGRNNumber() {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-
-  return `GRN-${year}${month}${day}-${random}`;
-}
+const { allocateNextNumber } = require('../../services/documentNumberingService');
 
 function isUnconfirmedGRN(grn) {
   return Boolean(grn) && !grn.confirmedAt && grn.status !== 'Cancelled';
@@ -287,8 +278,6 @@ class GoodsReceivingModel {
   // CREATE GOODS RECEIVING FROM ONE OR MORE PURCHASE ORDERS
   // ============================================================
   static async create(data) {
-    const grnNumber = generateGRNNumber();
-
     return await prisma.$transaction(async (tx) => {
       const purchaseOrderIds = [
         ...new Set(
@@ -327,6 +316,11 @@ class GoodsReceivingModel {
       if (purchaseOrders.some((po) => po.supplierId !== supplierId)) {
         throw new Error('All purchase orders in a GRN must belong to the same supplier');
       }
+
+      const grnNumber = await allocateNextNumber(data.companyId, 'grn', {
+        tx,
+        manualNumber: data.grnNumber || null,
+      });
 
       const poById = Object.fromEntries(purchaseOrders.map((po) => [po.id, po]));
       const poItemById = {};

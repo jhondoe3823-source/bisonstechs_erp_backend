@@ -11,7 +11,7 @@ const createInvoiceFromOrder = async (req, res) => {
   try {
     const userId = req.user.id;
     const companyId = (req.method === 'GET' || req.method === 'HEAD') ? (req.companyIdFilter ?? req.user.companyId) : req.user.companyId;
-    const { orderId, dueDate, paymentTerms } = req.body;
+    const { orderId, dueDate, paymentTerms, salesPersonId, commissionPercent } = req.body;
     const {
       normalizeInstallmentSaleInput,
       createSalesInstallmentSchedule,
@@ -63,7 +63,14 @@ const createInvoiceFromOrder = async (req, res) => {
       userId,
       dueDate,
       paymentTerms,
-      fiscalYearId
+      fiscalYearId,
+      {
+        salesPersonId: salesPersonId || null,
+        commissionPercent:
+          commissionPercent !== undefined && commissionPercent !== null
+            ? commissionPercent
+            : undefined,
+      }
     );
 
     if (installmentInput.isInstallmentSale && invoice?.id) {

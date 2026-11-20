@@ -83,6 +83,7 @@ exports.createSalesperson = async (req, res) => {
       status = "Active",
       territory,
       commissionRate = 0,
+      commissionType = 'flat',
       monthlyTarget = 0,
       notes,
       userId,
@@ -94,6 +95,7 @@ exports.createSalesperson = async (req, res) => {
       return res.status(400).json({ success: false, message: "Salesperson name is required" });
     }
 
+    const normalizedType = String(commissionType || 'flat').toLowerCase() === 'slab' ? 'slab' : 'flat';
     const salespersonNumber = await generateSalespersonNumber(companyId);
 
     const salesperson = await prisma.salesperson.create({
@@ -105,6 +107,7 @@ exports.createSalesperson = async (req, res) => {
         employeeCode,
         status,
         territory,
+        commissionType: normalizedType,
         commissionRate: parseFloat(commissionRate) || 0,
         monthlyTarget: parseFloat(monthlyTarget) || 0,
         notes,
@@ -205,6 +208,7 @@ exports.updateSalesperson = async (req, res) => {
       status,
       territory,
       commissionRate,
+      commissionType,
       monthlyTarget,
       notes,
       userId,
@@ -220,6 +224,13 @@ exports.updateSalesperson = async (req, res) => {
       return res.status(404).json({ success: false, message: "Salesperson not found" });
     }
 
+    const normalizedType =
+      commissionType !== undefined
+        ? String(commissionType || 'flat').toLowerCase() === 'slab'
+          ? 'slab'
+          : 'flat'
+        : undefined;
+
     const updated = await prisma.salesperson.update({
       where: { id },
       data: {
@@ -229,6 +240,7 @@ exports.updateSalesperson = async (req, res) => {
         ...(employeeCode !== undefined && { employeeCode }),
         ...(status && { status }),
         ...(territory !== undefined && { territory }),
+        ...(normalizedType && { commissionType: normalizedType }),
         ...(commissionRate !== undefined && { commissionRate: parseFloat(commissionRate) || 0 }),
         ...(monthlyTarget !== undefined && { monthlyTarget: parseFloat(monthlyTarget) || 0 }),
         ...(notes !== undefined && { notes }),

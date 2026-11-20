@@ -37,6 +37,7 @@ async function listMembershipsForUser(userId) {
           select: {
             id: true,
             name: true,
+            slug: true,
             email: true,
             logo: true,
             isActive: true,
@@ -65,6 +66,7 @@ async function listMembershipsForUser(userId) {
           select: {
             id: true,
             name: true,
+            slug: true,
             email: true,
             logo: true,
             isActive: true,
@@ -163,9 +165,10 @@ async function getAccessibleCompanyIds(userId) {
 /**
  * Resolve active company for a request.
  * Header: X-Company-Id = uuid | __all__
+ * Optional: opts.slug from Host / X-Company-Slug (used when no explicit company id)
  * Falls back to user.companyId (primary).
  */
-async function resolveActiveCompanyContext(userId, primaryCompanyId, headerRaw) {
+async function resolveActiveCompanyContext(userId, primaryCompanyId, headerRaw, opts = {}) {
   const requested = normalizeCompanyHeader(headerRaw);
   const accessibleIds = await getAccessibleCompanyIds(userId);
 
@@ -180,7 +183,17 @@ async function resolveActiveCompanyContext(userId, primaryCompanyId, headerRaw) 
     };
   }
 
-  let companyId = requested || primaryCompanyId || accessibleIds[0] || null;
+  let companyId = requested || null;
+
+  if (!companyId && opts.slug) {
+    const { findCompanyBySlug } = require('./companySlug');
+    const bySlug = await findCompanyBySlug(opts.slug);
+    if (bySlug?.id) companyId = bySlug.id;
+  }
+
+  if (!companyId) {
+    companyId = primaryCompanyId || accessibleIds[0] || null;
+  }
 
   if (companyId && !accessibleIds.includes(companyId)) {
     if (companyId === primaryCompanyId) {

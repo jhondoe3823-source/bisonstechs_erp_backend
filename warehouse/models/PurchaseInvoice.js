@@ -60,13 +60,10 @@ function fxPersistSlice(fx) {
   };
 }
 
-function generateInvoiceNumber() {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-  return `PI-${year}${month}${day}-${random}`;
+const { allocateNextNumber } = require('../../services/documentNumberingService');
+
+async function nextPurchaseInvoiceNumber(companyId, tx, manualNumber = null) {
+  return allocateNextNumber(companyId, 'purchase-invoice', { tx, manualNumber });
 }
 
 async function findOrCreateAPAccount(tx, companyId, userId) {
@@ -713,9 +710,13 @@ async function applyPurchaseInvoiceStockIn(tx, invoice, userId) {
 
 class PurchaseInvoiceModel {
   static async createFromGRN(data) {
-    const invoiceNumber = generateInvoiceNumber();
-
     const invoice = await prisma.$transaction(async (tx) => {
+      const invoiceNumber = await nextPurchaseInvoiceNumber(
+        data.companyId,
+        tx,
+        data.invoiceNumber || null
+      );
+
       const grn = await tx.goodsReceiving.findFirst({
         where: {
           id: data.goodsReceivingId,
@@ -916,7 +917,6 @@ class PurchaseInvoiceModel {
   }
 
   static async createFromSources(data) {
-    const invoiceNumber = generateInvoiceNumber();
     const goodsReceivingIds = [...new Set((data.goodsReceivingIds || []).filter(Boolean))];
     const purchaseOrderIds = [...new Set((data.purchaseOrderIds || []).filter(Boolean))];
 
@@ -925,6 +925,12 @@ class PurchaseInvoiceModel {
     }
 
     return prisma.$transaction(async (tx) => {
+      const invoiceNumber = await nextPurchaseInvoiceNumber(
+        data.companyId,
+        tx,
+        data.invoiceNumber || null
+      );
+
       const grns = goodsReceivingIds.length
         ? await tx.goodsReceiving.findMany({
           where: {
@@ -1221,9 +1227,13 @@ class PurchaseInvoiceModel {
   }
 
   static async createFromPurchaseOrder(data) {
-    const invoiceNumber = generateInvoiceNumber();
-
     const invoice = await prisma.$transaction(async (tx) => {
+      const invoiceNumber = await nextPurchaseInvoiceNumber(
+        data.companyId,
+        tx,
+        data.invoiceNumber || null
+      );
+
       const purchaseOrder = await tx.purchaseOrder.findFirst({
         where: {
           id: data.purchaseOrderId,

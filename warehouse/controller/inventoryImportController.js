@@ -10,7 +10,14 @@ const {
   getOrCreateInventorySettings,
   updateInventorySettings,
 } = require('../services/inventorySettingsService');
-const { listUoms, listConversions, ensureDefaultUoms } = require('../services/uomService');
+const {
+  listUoms,
+  listConversions,
+  ensureDefaultUoms,
+  createUom,
+  updateUom,
+  deactivateUom,
+} = require('../services/uomService');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -287,7 +294,10 @@ const putSettings = async (req, res) => {
 const getUoms = async (req, res) => {
   try {
     const companyId = companyIdOf(req);
-    await ensureDefaultUoms(companyId);
+    if (!companyId) {
+      return res.status(400).json({ success: false, message: 'Company context required' });
+    }
+    await ensureDefaultUoms(companyId, { createdBy: req.user?.id || 'SYSTEM' });
     const [uoms, conversions] = await Promise.all([
       listUoms(companyId),
       listConversions(companyId),
@@ -295,6 +305,50 @@ const getUoms = async (req, res) => {
     return res.json({ success: true, data: { uoms, conversions } });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const postUom = async (req, res) => {
+  try {
+    const companyId = companyIdOf(req);
+    if (!companyId) {
+      return res.status(400).json({ success: false, message: 'Company context required' });
+    }
+    const uom = await createUom(companyId, req.body || {}, req.user?.id || 'SYSTEM');
+    return res.status(201).json({ success: true, data: uom });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ success: false, message: err.message });
+  }
+};
+
+const putUom = async (req, res) => {
+  try {
+    const companyId = companyIdOf(req);
+    if (!companyId) {
+      return res.status(400).json({ success: false, message: 'Company context required' });
+    }
+    const uom = await updateUom(
+      companyId,
+      req.params.id,
+      req.body || {},
+      req.user?.id || 'SYSTEM'
+    );
+    return res.json({ success: true, data: uom });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ success: false, message: err.message });
+  }
+};
+
+const deleteUom = async (req, res) => {
+  try {
+    const companyId = companyIdOf(req);
+    if (!companyId) {
+      return res.status(400).json({ success: false, message: 'Company context required' });
+    }
+    const uom = await deactivateUom(companyId, req.params.id);
+    return res.json({ success: true, data: uom, message: 'Unit deactivated' });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ success: false, message: err.message });
   }
 };
 
@@ -308,4 +362,7 @@ module.exports = {
   getSettings,
   putSettings,
   getUoms,
+  postUom,
+  putUom,
+  deleteUom,
 };

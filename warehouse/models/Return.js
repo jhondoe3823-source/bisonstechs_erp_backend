@@ -6,28 +6,13 @@ const {
   resolveLocationId,
   adjustLocationStock,
 } = require('../services/locationService');
-
-function generateReturnNumber(returnType) {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-  
-  let prefix = 'RET';
-  if (returnType === 'Sales Return') prefix = 'SR';
-  else if (returnType === 'Purchase Return') prefix = 'PR';
-  
-  return `${prefix}-${year}${month}${day}-${random}`;
-}
+const { allocateNextNumber } = require('../../services/documentNumberingService');
 
 class ReturnModel {
   // ============================================================
   // CREATE RETURN
   // ============================================================
   static async create(data) {
-    const returnNumber = generateReturnNumber(data.returnType || 'Sales Return');
-    
     return await prisma.$transaction(async (tx) => {
       const {
         getReturnedQtyByProduct,
@@ -35,8 +20,14 @@ class ReturnModel {
         syncOrderFulfillmentStatus,
       } = require('../services/salesQuantityService');
 
+      if (!data.companyId) {
+        throw new Error('Company is required');
+      }
+
+      const returnType = data.returnType || 'Sales Return';
+
       // ─── Validate partial return quantities against delivered / prior returns ──
-      if (data.orderId && (data.returnType || 'Sales Return') === 'Sales Return') {
+      if (data.orderId && returnType === 'Sales Return') {
         const order = await tx.order.findUnique({
           where: { id: data.orderId },
           include: { items: true },
@@ -87,6 +78,10 @@ class ReturnModel {
       const restockingFee = data.restockingFee ?? 0;
       const shippingCost = data.shippingCost ?? 0;
       const finalTotalRefund = Math.max(0, calculatedTotalRefund - restockingFee - shippingCost);
+
+      const docType =
+        returnType === 'Purchase Return' ? 'purchase-return' : 'sale-return';
+      const returnNumber = await allocateNextNumber(data.companyId, docType, { tx });
       
       // ─── Create Return ──────────────────────────────────────
       const returnData = await tx.return.create({

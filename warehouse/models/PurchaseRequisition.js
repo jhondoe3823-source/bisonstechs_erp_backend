@@ -1,14 +1,6 @@
 const prisma = require('../../prisma/client');
 const { resolveLocationId } = require('../services/locationService');
-
-function generateRequisitionNumber() {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-  return `PR-${year}${month}${day}-${random}`;
-}
+const { allocateNextNumber } = require('../../services/documentNumberingService');
 
 const EDITABLE_STATUSES = new Set(['Draft', 'Rejected']);
 const APPROVABLE_STATUSES = new Set(['Submitted']);
@@ -16,9 +8,13 @@ const CONVERTIBLE_STATUSES = new Set(['Approved', 'Partially Converted']);
 
 class PurchaseRequisitionModel {
   static async create(data) {
-    const requisitionNumber = generateRequisitionNumber();
-
     return prisma.$transaction(async (tx) => {
+      const requisitionNumber = await allocateNextNumber(
+        data.companyId,
+        'purchase-requisition',
+        { tx, manualNumber: data.requisitionNumber || null }
+      );
+
       let suggestedSupplier = null;
       if (data.suggestedSupplierId) {
         suggestedSupplier = await tx.supplier.findFirst({

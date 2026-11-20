@@ -1140,9 +1140,6 @@ res.status(200).json({
   }
 };
 
-// @desc    Delete bill
-// @route   DELETE /api/accounts-payable/bills/:id
-// @access  Private
 exports.deleteBill = async (req, res) => {
   console.log('📦 [AP] deleteBill called');
 

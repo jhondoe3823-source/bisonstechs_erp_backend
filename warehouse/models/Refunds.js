@@ -2,21 +2,7 @@
 
 const prisma = require('../../prisma/client');
 const { postRefundPaymentAccounting } = require('../services/salesAccountingService');
-
-// ─── Generate Refund Number Function ──────────────────────
-function generateRefundNumber(refundType) {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-  
-  let prefix = 'REF';
-  if (refundType === 'Sales Refund') prefix = 'SRF';
-  else if (refundType === 'Purchase Refund') prefix = 'PRF';
-  
-  return `${prefix}-${year}${month}${day}-${random}`;
-}
+const { allocateNextNumber } = require('../../services/documentNumberingService');
 
 class RefundModel {
   // ============================================================
@@ -46,14 +32,20 @@ class RefundModel {
       }
     }
 
-    // ✅ FIXED: Generate refund number before creating
-    const refundNumber = generateRefundNumber(data.refundType || 'Sales Refund');
-    
+    if (!data.companyId) {
+      throw new Error('Company is required');
+    }
+
+    const refundType = data.refundType || 'Sales Refund';
+    const docType =
+      refundType === 'Purchase Refund' ? 'purchase-refund' : 'sale-refund';
+    const refundNumber = await allocateNextNumber(data.companyId, docType);
+
     const refund = await prisma.refund.create({
       data: {
-        refundNumber,  // ✅ Added missing refundNumber
+        refundNumber,
         refundDate: new Date(),
-        refundType: data.refundType || 'Sales Refund',
+        refundType,
         refundStatus: data.refundStatus || 'Pending',
         refundMethod: data.refundMethod || 'Original Payment',
         // Order fields (for Sales Refund)

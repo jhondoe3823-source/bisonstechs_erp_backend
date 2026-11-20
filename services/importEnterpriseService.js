@@ -18,6 +18,7 @@ const {
 } = require('../utils/companyAccess');
 const { resolveImportExchangeRate, assertImportRateDate } = require('../utils/importFx');
 const { randomUUID } = require('crypto');
+const { allocateNextNumber } = require('./documentNumberingService');
 
 function toNumber(val, fallback = 0) {
   if (val == null) return fallback;
@@ -914,9 +915,8 @@ async function createSupplierBillEnterprise(req, data = {}) {
     }
   }
 
-  const count = await prisma.importSupplierBill.count({ where: { companyId } });
-  const year = new Date().getFullYear();
-  const billNumber = data.billNumber || `IBILL-${year}-${String(count + 1).padStart(3, '0')}`;
+  const billNumber =
+    data.billNumber || (await allocateNextNumber(companyId, 'import-supplier-bill'));
 
   const bill = await prisma.importSupplierBill.create({
     data: {

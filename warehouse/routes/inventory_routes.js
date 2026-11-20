@@ -18,6 +18,9 @@ const {
   getSettings,
   putSettings,
   getUoms,
+  postUom,
+  putUom,
+  deleteUom,
 } = require('../controller/inventoryImportController');
 
 router.use(protect);
@@ -29,6 +32,9 @@ router.get('/valuation/categories', getCategoryBreakdown);
 router.get('/settings', getSettings);
 router.put('/settings', putSettings);
 router.get('/uoms', getUoms);
+router.post('/uoms', postUom);
+router.put('/uoms/:id', putUom);
+router.delete('/uoms/:id', deleteUom);
 
 router.get('/import/template', downloadTemplate);
 router.get('/import/batches', getImportBatches);

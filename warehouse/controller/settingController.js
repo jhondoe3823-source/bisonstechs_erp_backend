@@ -44,10 +44,21 @@ function resolveCompanyId(req) {
     : req.user.companyId;
 }
 
+/** Scalar company id for writes/seeds (companyIdFilter may be `{ in: [...] }`). */
+function resolveScalarCompanyId(req) {
+  const filter = resolveCompanyId(req);
+  if (typeof filter === 'string' && filter) return filter;
+  if (typeof req.user?.companyId === 'string' && req.user.companyId) {
+    return req.user.companyId;
+  }
+  return null;
+}
+
 // ─── GET SETTINGS - ✅ FIXED
 const getSettings = async (req, res) => {
   try {
     const companyId = resolveCompanyId(req);
+    const seedCompanyId = resolveScalarCompanyId(req);
     const { category } = req.query;
     
     if (!category) {
@@ -60,8 +71,21 @@ const getSettings = async (req, res) => {
     console.log('🔵 [getSettings] Category:', category);
     console.log('🔵 [getSettings] Company ID:', companyId);
 
+    // Product unit pickers: auto-seed company UOM catalog into stockUnit settings
+    if (category === 'stockUnit' && seedCompanyId) {
+      try {
+        const { ensureDefaultUoms } = require('../services/uomService');
+        await ensureDefaultUoms(seedCompanyId, { createdBy: req.user?.id || 'SYSTEM' });
+      } catch (seedErr) {
+        console.warn('[getSettings] UOM seed warning:', seedErr.message);
+      }
+    }
+
+    // Prefer active company id so pickers/pages match the selected company
+    const listCompanyId = seedCompanyId || companyId;
+
     // ✅ FIXED: Pass companyId instead of userId
-    const settings = await Setting.findByCategory(category, companyId, true);
+    const settings = await Setting.findByCategory(category, listCompanyId, true);
     
     const formatted = settings.map(item => formatResponse(item));
 
@@ -156,13 +180,20 @@ const getSettingById = async (req, res) => {
 const createSetting = async (req, res) => {
   try {
     const userId = req.user.id;
-    const companyId = resolveCompanyId(req);
+    const companyId = resolveScalarCompanyId(req) || req.user?.companyId;
     const { category, name, isDefault, displayOrder, ...rest } = req.body;
 
     console.log('🔵 [createSetting] Called');
     console.log('🔵 [createSetting] Category:', category);
     console.log('🔵 [createSetting] Name:', name);
     console.log('🔵 [createSetting] Company ID:', companyId);
+
+    if (!companyId || typeof companyId !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Company context required',
+      });
+    }
 
     if (!category || !name) {
       return res.status(400).json({
@@ -194,6 +225,16 @@ const createSetting = async (req, res) => {
       createdBy: userId,
       companyId: companyId
     });
+
+    // Keep UnitOfMeasure master in sync when adding product units from pickers
+    if (category === 'stockUnit' && companyId) {
+      try {
+        const { ensureUom } = require('../services/uomService');
+        await ensureUom(companyId, name, name);
+      } catch (uomErr) {
+        console.warn('[createSetting] UOM sync warning:', uomErr.message);
+      }
+    }
 
     console.log('✅ [createSetting] Setting created successfully:', setting.id);
 

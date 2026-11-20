@@ -17,6 +17,7 @@ const importEnterprise = require('./importEnterpriseService');
 const { hasPermission, isAdminRole, isPlatformAdmin } = require('./permissionService');
 const { sendToUser, sendToUsers } = require('./notificationService');
 const importGrnService = require('./importGrnService');
+const { allocateNextNumber } = require('./documentNumberingService');
 
 const RFQ_APPROVE_PERMISSION = 'import.rfqs.approve';
 const CUSTOMS_APPROVE_PERMISSION = 'import.customs.approve';
@@ -820,19 +821,8 @@ async function createRfq(req, data) {
     };
   });
 
-  // Server-generated unique number — ignore client IRFQ/RFQ variants
-  const year = new Date().getFullYear();
-  const prefix = `RFQ-${year}-`;
-  const existingNums = await prisma.importRfq.findMany({
-    where: { companyId, rfqNumber: { startsWith: prefix } },
-    select: { rfqNumber: true },
-  });
-  let maxSeq = 0;
-  for (const row of existingNums) {
-    const m = String(row.rfqNumber).match(/RFQ-\d{4}-(\d+)$/i);
-    if (m) maxSeq = Math.max(maxSeq, Number(m[1]) || 0);
-  }
-  const rfqNumber = `${prefix}${String(maxSeq + 1).padStart(3, '0')}`;
+  // Server-generated unique number via Settings → Invoice Numbers
+  const rfqNumber = await allocateNextNumber(companyId, 'import-rfq');
 
   const notesRaw = data.notes ?? data.specialNotes ?? data.commercialNotes;
   const notes =
@@ -1151,9 +1141,8 @@ async function createPurchaseOrder(req, data) {
     supplierCountry = sup.country || supplierCountry;
   }
 
-  const count = await prisma.importPurchaseOrder.count({ where: { companyId } });
-  const year = new Date().getFullYear();
-  const poNumber = data.poNumber || `IPO-${year}-${String(count + 1).padStart(3, '0')}`;
+  const poNumber =
+    data.poNumber || (await allocateNextNumber(companyId, 'import-purchase-order'));
 
   const currency = String(data.currency || 'USD').toUpperCase();
   const orderDateForFx = data.orderDate ? new Date(data.orderDate) : new Date();
@@ -2003,9 +1992,8 @@ async function createShipment(req, data) {
   const userId = req.user.id;
   const settings = await prisma.importSetting.findUnique({ where: { companyId } }).catch(() => null);
 
-  const count = await prisma.importShipment.count({ where: { companyId } });
-  const year = new Date().getFullYear();
-  const shipmentNumber = data.shipmentNumber || `ISHP-${year}-${String(count + 1).padStart(3, '0')}`;
+  const shipmentNumber =
+    data.shipmentNumber || (await allocateNextNumber(companyId, 'import-shipment'));
 
   let importPo = null;
   if (data.importPoId) {
@@ -3362,18 +3350,9 @@ async function createQuotation(req, data) {
     throw err;
   }
 
-  const year = new Date().getFullYear();
-  const prefix = `ISQ-${year}-`;
-  const existingQ = await prisma.importSupplierQuotation.findMany({
-    where: { companyId, quotationNumber: { startsWith: prefix } },
-    select: { quotationNumber: true },
-  });
-  let maxQ = 0;
-  for (const row of existingQ) {
-    const m = String(row.quotationNumber).match(/ISQ-\d{4}-(\d+)$/i);
-    if (m) maxQ = Math.max(maxQ, Number(m[1]) || 0);
-  }
-  const quotationNumber = data.quotationNumber || `${prefix}${String(maxQ + 1).padStart(3, '0')}`;
+  const quotationNumber =
+    data.quotationNumber ||
+    (await allocateNextNumber(companyId, 'import-supplier-quotation'));
 
   // Prices must come from the quotation payload — never copy RFQ target prices
   let rawItems = Array.isArray(data.items) ? data.items : [];

@@ -35,19 +35,29 @@ function parseLinkedIds(notes, marker) {
 async function getDeliveredQtyByProduct(orderId, { tx = prisma, includePending = false } = {}) {
   const map = {};
   if (!orderId) return map;
-  const deliveries = await tx.delivery.findMany({
-    where: {
-      isActive: true,
-      isDeleted: false,
-      ...(includePending
-        ? {}
-        : {
-            OR: [
-              { confirmedAt: { not: null } },
-              { deliveryStatus: 'Delivered' },
-            ],
-          }),
+
+  // Scope to this order (primary FK or multi-order notes) — never scan all deliveries.
+  const and = [
+    { isActive: true },
+    { isDeleted: false },
+    {
+      OR: [
+        { salesOrderId: orderId },
+        { notes: { contains: orderId } },
+      ],
     },
+  ];
+  if (!includePending) {
+    and.push({
+      OR: [
+        { confirmedAt: { not: null } },
+        { deliveryStatus: 'Delivered' },
+      ],
+    });
+  }
+
+  const deliveries = await tx.delivery.findMany({
+    where: { AND: and },
     include: { items: true },
   });
 

@@ -121,12 +121,25 @@ async function runProtect(req, res, next, { requireSubscription }) {
       req.headers['x-active-company-id'] ||
       req.query?.companyId;
 
+    const { extractTenantSlugFromHost } = require('../utils/companySlug');
+    const slugHeader = String(
+      req.headers['x-company-slug'] || req.query?.companySlug || ''
+    )
+      .trim()
+      .toLowerCase();
+    const hostRaw =
+      req.headers['x-forwarded-host'] || req.headers.host || '';
+    const hostFirst = String(hostRaw).split(',')[0].trim();
+    const hostSlug = extractTenantSlugFromHost(hostFirst);
+    const tenantSlug = slugHeader || hostSlug || null;
+
     let companyCtx;
     try {
       companyCtx = await resolveActiveCompanyContext(
         row.id,
         row.companyId,
-        companyHeader
+        companyHeader,
+        { slug: tenantSlug }
       );
     } catch (accessErr) {
       return res.status(accessErr.status || 403).json({

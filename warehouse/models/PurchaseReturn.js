@@ -16,16 +16,7 @@ const {
 const {
   findOrCreateInventoryAccount,
 } = require('../services/stockAccountingService');
-
-// ─── Generate Return Number ──────────────────────────────
-function generateReturnNumber() {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-  return `PR-${year}${month}${day}-${random}`;
-}
+const { allocateNextNumber } = require('../../services/documentNumberingService');
 
 async function findAPAccount(tx, companyId) {
   const { findApAccount } = require('../../utils/apAccountHelper');
@@ -443,8 +434,6 @@ class PurchaseReturnModel {
   // CREATE PURCHASE RETURN (DRAFT) - ✅ GRN-BASED WITH INVOICE LINK
   // ============================================================
   static async createDraft(data) {
-    const returnNumber = generateReturnNumber();
-
     return await prisma.$transaction(async (tx) => {
       const {
         supplierId,
@@ -465,6 +454,10 @@ class PurchaseReturnModel {
       // ─── Validation ──────────────────────────────────────────
       if (!supplierId) {
         throw new Error('Supplier is required');
+      }
+
+      if (!companyId) {
+        throw new Error('Company is required');
       }
 
       if (!goodsReceivingId && !purchaseInvoiceId) {
@@ -659,6 +652,9 @@ class PurchaseReturnModel {
           baseAmount: fx.baseAmount,
         };
       }
+
+      // ─── Allocate series number after validation ─────────────
+      const returnNumber = await allocateNextNumber(companyId, 'purchase-return', { tx });
 
       // ─── Create Purchase Return ─────────────────────────────
       const purchaseReturn = await tx.purchaseReturn.create({

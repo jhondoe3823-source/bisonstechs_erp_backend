@@ -162,28 +162,44 @@ async function logExportAudit(
   }
 }
 
+const {
+  allocateNextNumberByPrefix,
+} = require('./documentNumberingService');
+
 /**
- * Generate the next `PREFIX-YYYY-NNNN` number scoped to a company.
- * The DB unique constraint is the final guard; callers retry on P2002.
+ * Generate the next document number for a company via Settings → Invoice Numbers.
+ * Falls back to PREFIX-YYYY-NNNN scan only if numbering service fails.
  */
 async function nextNumber(tx, model, field, companyId, prefix) {
-  const year = new Date().getFullYear();
-  const head = `${prefix}-${year}-`;
-  const rows = await tx[model].findMany({
-    where: { companyId, [field]: { startsWith: head } },
-    select: { [field]: true },
-  });
-  let max = 0;
-  for (const row of rows) {
-    const raw = String(row[field] || '').slice(head.length);
-    const n = parseInt(raw, 10);
-    if (Number.isFinite(n) && n > max) max = n;
+  try {
+    return await allocateNextNumberByPrefix(companyId, prefix, { tx });
+  } catch (err) {
+    console.warn('[nextNumber] document numbering fallback:', err.message);
+    const year = new Date().getFullYear();
+    const head = `${prefix}-${year}-`;
+    const rows = await tx[model].findMany({
+      where: { companyId, [field]: { startsWith: head } },
+      select: { [field]: true },
+    });
+    let max = 0;
+    for (const row of rows) {
+      const raw = String(row[field] || '').slice(head.length);
+      const n = parseInt(raw, 10);
+      if (Number.isFinite(n) && n > max) max = n;
+    }
+    return `${head}${String(max + 1).padStart(4, '0')}`;
   }
-  return `${head}${String(max + 1).padStart(4, '0')}`;
 }
 
-/** SalesInvoice numbers are globally unique (legacy constraint). */
-async function nextSalesInvoiceNumber(tx, prefix = 'ECI') {
+/** SalesInvoice numbers — uses company document series (ECI / sale-invoice mapping). */
+async function nextSalesInvoiceNumber(tx, prefix = 'ECI', companyId = null) {
+  if (companyId) {
+    try {
+      return await allocateNextNumberByPrefix(companyId, prefix, { tx });
+    } catch (err) {
+      console.warn('[nextSalesInvoiceNumber] fallback:', err.message);
+    }
+  }
   const year = new Date().getFullYear();
   const head = `${prefix}-${year}-`;
   const rows = await tx.salesInvoice.findMany({

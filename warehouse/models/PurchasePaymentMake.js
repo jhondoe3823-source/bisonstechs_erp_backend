@@ -17,16 +17,7 @@ const {
   getOrCreateFxGainAccount,
   getOrCreateFxLossAccount,
 } = require('../../utils/fxAccountHelper');
-
-// ─── Generate Payment Number ──────────────────────────────
-function generatePaymentNumber() {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-  return `PP-${year}${month}${day}-${random}`;
-}
+const { allocateNextNumber } = require('../../services/documentNumberingService');
 
 async function findAPAccount(tx, companyId, userId) {
   return getOrCreateApAccount(userId || 'SYSTEM', companyId, tx);
@@ -131,8 +122,6 @@ class PurchasePaymentMakeModel {
   // MAKE PAYMENT AGAINST INVOICES - ✅ FIXED
   // ============================================================
   static async makePayment(data) {
-    const paymentNumber = generatePaymentNumber();
-
     return await prisma.$transaction(async (tx) => {
       const {
         supplierId,
@@ -160,6 +149,10 @@ class PurchasePaymentMakeModel {
 
       if (!invoicePayments || invoicePayments.length === 0) {
         throw new Error('At least one invoice must be selected');
+      }
+
+      if (!companyId) {
+        throw new Error('Company is required');
       }
 
       if (!amount || amount <= 0) {
@@ -382,6 +375,9 @@ class PurchasePaymentMakeModel {
         debit: 0,
         credit: totalPaymentBaseNum,
       });
+
+      // ─── Allocate series number after validation ─────────────
+      const paymentNumber = await allocateNextNumber(companyId, 'purchase-payment', { tx });
 
       // ─── Create Journal Entry ────────────────────────────────
       const entryNumber = `JE-${Date.now()}-${Math.floor(Math.random() * 10000)}`;

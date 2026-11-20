@@ -10,17 +10,9 @@ const { getIssuedByInvoiceQty } = require('../services/inventoryService');
 const {
   getReservedDeliveredQtyByProduct,
   buildRemainingDeliveryLines,
+  syncOrderFulfillmentStatus,
 } = require('../services/salesQuantityService');
-
-function generateDeliveryNumber() {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-
-  return `DLV-${year}${month}${day}-${random}`;
-}
+const { allocateNextNumber } = require('../../services/documentNumberingService');
 
 // ─── Helper: Find or Create Customer ────────────────────────
 async function findOrCreateCustomer(tx, salesOrder, companyId, createdBy) {
@@ -199,8 +191,6 @@ async function findOrCreateCustomer(tx, salesOrder, companyId, createdBy) {
 
 class DeliveryModel {
   static async create(data) {
-    const deliveryNumber = generateDeliveryNumber();
-
     return await prisma.$transaction(async (tx) => {
       // Get sales order with items
       const salesOrder = await tx.order.findUnique({
@@ -219,11 +209,17 @@ class DeliveryModel {
         throw new Error('Sales order not found');
       }
 
+      const companyId = salesOrder.companyId || data.companyId;
+      const deliveryNumber = await allocateNextNumber(companyId, 'delivery', {
+        tx,
+        manualNumber: data.deliveryNumber || null,
+      });
+
       // ✅ Find or create customer (company-scoped)
       const { customerId, customer } = await findOrCreateCustomer(
         tx,
         salesOrder,
-        salesOrder.companyId || data.companyId,
+        companyId,
         data.createdBy
       );
 
@@ -234,8 +230,6 @@ class DeliveryModel {
       );
 
       // Warehouse optional — use selected/order location when present, else company default or null
-      const companyId =
-        salesOrder.companyId || data.companyId || null;
       const locationId = await resolveLocationId(
         tx,
         companyId,
@@ -365,8 +359,6 @@ class DeliveryModel {
       throw new Error('At least one sales order ID is required');
     }
 
-    const deliveryNumber = generateDeliveryNumber();
-
     return await prisma.$transaction(async (tx) => {
       // ── 1. Load all orders ────────────────────────────────
       const salesOrders = await tx.order.findMany({
@@ -385,6 +377,11 @@ class DeliveryModel {
 
       // ── 2. Validate same customer ─────────────────────────
       const firstOrder = salesOrders[0];
+      const companyId = firstOrder.companyId || data.companyId;
+      const deliveryNumber = await allocateNextNumber(companyId, 'delivery', {
+        tx,
+        manualNumber: data.deliveryNumber || null,
+      });
       for (const order of salesOrders) {
         if (firstOrder.customerId && order.customerId && firstOrder.customerId !== order.customerId) {
           throw new Error(
@@ -409,7 +406,6 @@ class DeliveryModel {
 
       // ── 3. Find or create customer from primary order ─────
       const primaryOrder = salesOrders[0];
-      const companyId = primaryOrder.companyId || data.companyId || null;
       const { customerId, customer } = await findOrCreateCustomer(
         tx,
         primaryOrder,
@@ -697,63 +693,23 @@ class DeliveryModel {
         }
       });
 
-      // Update sales order status for all linked orders based on cumulative confirmed deliveries
+      // Update sales order status for all linked orders (scoped qty helpers — no full-table scan)
       const linkedOrderIds = [];
       if (delivery.notes && delivery.notes.includes('__LINKED_ORDERS__:')) {
         try {
           const match = delivery.notes.match(/__LINKED_ORDERS__:(\[.*?\])/);
           if (match) linkedOrderIds.push(...JSON.parse(match[1]));
-        } catch (e) { }
+        } catch (e) { /* ignore malformed marker */ }
       }
       if (delivery.salesOrderId && !linkedOrderIds.includes(delivery.salesOrderId)) {
         linkedOrderIds.push(delivery.salesOrderId);
       }
 
       for (const targetOrderId of linkedOrderIds) {
-        const orderWithItems = await tx.order.findUnique({
-          where: { id: targetOrderId },
-          include: { items: true },
-        });
-        if (!orderWithItems) continue;
-
-        const confirmedDeliveries = await tx.delivery.findMany({
-          where: {
-            confirmedAt: { not: null },
-            isActive: true,
-            isDeleted: false,
-          },
-          include: { items: true },
-        });
-
-        const deliveredByProduct = {};
-        for (const d of confirmedDeliveries) {
-          for (const di of d.items || []) {
-            const diOrderIdMatch = di.notes ? di.notes.match(/__ORDER_ID__:([a-zA-Z0-9_-]+)/) : null;
-            const diOrderId = diOrderIdMatch ? diOrderIdMatch[1] : d.salesOrderId;
-            if (diOrderId === targetOrderId) {
-              deliveredByProduct[di.productId] =
-                (deliveredByProduct[di.productId] || 0) +
-                (Number(di.deliveredQuantity) || 0);
-            }
-          }
-        }
-
-        let allDelivered = true;
-        for (const oi of orderWithItems.items || []) {
-          const delivered = deliveredByProduct[oi.productId] || 0;
-          if (delivered < oi.quantity) {
-            allDelivered = false;
-            break;
-          }
-        }
-
+        await syncOrderFulfillmentStatus(targetOrderId, { tx, userId });
         await tx.order.update({
           where: { id: targetOrderId },
-          data: {
-            deliveryDate: new Date(),
-            orderStatus: allDelivered ? 'Delivered' : 'Partially Delivered',
-            fulfillmentStatus: allDelivered ? 'Delivered' : 'Partial',
-          },
+          data: { deliveryDate: new Date() },
         });
       }
 

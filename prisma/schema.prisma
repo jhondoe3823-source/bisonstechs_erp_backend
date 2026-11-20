@@ -110,6 +110,8 @@ model ExchangeRateHistory {
 model Company {
   id                    String    @id @default(uuid())
   name                  String
+  /// URL subdomain slug — e.g. "acme" → acme.bisonstechs.com
+  slug                  String?   @unique
   email                 String?   @unique
   phone                 String?
   address               String?
@@ -287,6 +289,9 @@ model Company {
   manufacturingBomCreators          ManufacturingBomCreator[]          @relation("ManufacturingBomCreatorCompany")
   manufacturingBomUpdateTools       ManufacturingBomUpdateTool[]       @relation("ManufacturingBomUpdateToolCompany")
   inventorySettings                 CompanyInventorySetting?
+  documentNumberingSetting          CompanyDocumentNumberingSetting?
+  salesAgentSetting                 CompanySalesAgentSetting?
+  documentNumberSeries              DocumentNumberSeries[]
   inventoryImportBatches            InventoryImportBatch[]
   unitsOfMeasure                    UnitOfMeasure[]
   uomConversions                    UomConversion[]
@@ -568,6 +573,67 @@ model CompanyInventorySetting {
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@map("company_inventory_settings")
+}
+
+/// Company-wide document series (Settings → Invoice Numbers).
+/// Used by sales, purchases, import, export, and related create flows.
+model CompanyDocumentNumberingSetting {
+  id                         String   @id @default(uuid())
+  companyId                  String   @unique @map("company_id")
+  allowManualInvoiceNumber   Boolean  @default(true) @map("allow_manual_invoice_number")
+  createdAt                  DateTime @default(now()) @map("created_at")
+  updatedAt                  DateTime @updatedAt @map("updated_at")
+
+  company Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  series  DocumentNumberSeries[]
+
+  @@map("company_document_numbering_settings")
+}
+
+/// Settings → Sales Agents (toggles + monthly commission slabs).
+model CompanySalesAgentSetting {
+  id                     String   @id @default(uuid())
+  companyId              String   @unique @map("company_id")
+  /// Show agent selector on Sale Invoice / POS. Off = feature invisible.
+  enableSalesAgents      Boolean  @default(true) @map("enable_sales_agents")
+  /// Show commission fields on sales + agent report columns.
+  trackCommission        Boolean  @default(true) @map("track_commission")
+  /// Sale cannot be saved without choosing an agent.
+  agentRequired          Boolean  @default(false) @map("agent_required")
+  /// Enable company-wide monthly commission slabs (used when agent type = slab).
+  customCommissionSlabs  Boolean  @default(false) @map("custom_commission_slabs")
+  /// [{ fromAmount: number, commissionPercent: number }, ...] sorted ascending by fromAmount
+  commissionSlabs        Json     @default("[]") @map("commission_slabs")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("company_sales_agent_settings")
+}
+
+model DocumentNumberSeries {
+  id           String   @id @default(uuid())
+  companyId    String   @map("company_id")
+  settingId    String   @map("setting_id")
+  /// e.g. sale-order, sale-invoice, purchase-order, grn, export-sales-order
+  documentType String   @map("document_type")
+  label        String
+  prefix       String
+  nextNumber   Int      @default(1) @map("next_number")
+  padLength    Int      @default(4) @map("pad_length")
+  sortOrder    Int      @default(0) @map("sort_order")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  company Company                         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  setting CompanyDocumentNumberingSetting @relation(fields: [settingId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, documentType])
+  @@index([companyId])
+  @@index([settingId])
+  @@map("document_number_series")
 }
 
 model UnitOfMeasure {
@@ -5706,6 +5772,9 @@ model SalesInvoice {
 
   salesPerson   String? @map("sales_person")
   salesPersonId String? @map("sales_person_id")
+  /// Snapshot of commission % applied on this invoice (editable when trackCommission is on)
+  commissionPercent Float? @default(0) @map("commission_percent")
+  commissionAmount  Float? @default(0) @map("commission_amount")
 
   createdBy String  @map("created_by")
   updatedBy String? @map("updated_by")
@@ -5952,6 +6021,10 @@ model POSSale {
   paidAmount       Float     @map("paid_amount")
   changeAmount     Float     @map("change_amount")
   notes            String?
+  salesPerson      String?   @map("sales_person")
+  salesPersonId    String?   @map("sales_person_id")
+  commissionPercent Float?   @default(0) @map("commission_percent")
+  commissionAmount  Float?   @default(0) @map("commission_amount")
   status           String    @default("Completed") // Completed, Held, Cancelled, Returned
   fiscalYearId     String?   @map("fiscal_year_id")
   journalEntryId   String?   @unique @map("journal_entry_id")
@@ -5975,6 +6048,7 @@ model POSSale {
   journalEntry JournalEntry?    @relation("POSSaleJournalEntry", fields: [journalEntryId], references: [id])
   creator      User             @relation("SaleCreator", fields: [createdBy], references: [id])
   company      Company          @relation(fields: [companyId], references: [id])
+  salesperson  Salesperson?     @relation(fields: [salesPersonId], references: [id], onDelete: SetNull)
   items        POSSaleItem[]
   payments     POSSalePayment[]
   returns      POSReturn[]
@@ -5983,6 +6057,7 @@ model POSSale {
   @@index([shiftId])
   @@index([terminalId])
   @@index([companyId])
+  @@index([salesPersonId])
   @@map("pos_sales")
 }
 
@@ -8195,6 +8270,8 @@ model Salesperson {
   employeeCode      String? @map("employee_code")
   status            String  @default("Active")
   territory         String?
+  /// flat = use commissionRate; slab = company monthly commission slabs
+  commissionType    String  @default("flat") @map("commission_type")
   commissionRate    Float   @default(0) @map("commission_rate")
   monthlyTarget     Float   @default(0) @map("monthly_target")
   notes             String?
@@ -8216,6 +8293,7 @@ model Salesperson {
   customers     Customer[]
   salesInvoices SalesInvoice[]
   orders        Order[]
+  posSales      POSSale[]
 
   @@unique([companyId, salespersonNumber])
   @@index([companyId])

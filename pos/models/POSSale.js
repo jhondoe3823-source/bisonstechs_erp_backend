@@ -131,6 +131,8 @@ class POSSaleModel {
       skipStockChecks = false,
       restaurantOrderId = null,
       orderId = null,
+      salesPersonId = null,
+      commissionPercent: commissionPercentOverride,
     } = data;
     const linkedRestaurantOrderId = restaurantOrderId || orderId || null;
 
@@ -420,6 +422,18 @@ class POSSaleModel {
         }
       });
 
+      const {
+        resolveAgentCommission,
+      } = require('../../services/salesAgentSettingsService');
+      const commission = await resolveAgentCommission({
+        companyId,
+        salesPersonId: salesPersonId || null,
+        grandTotal,
+        overridePercent: commissionPercentOverride,
+        atDate: new Date(),
+        client: tx,
+      });
+
       const sale = await tx.pOSSale.create({
         data: {
           id: id || randomUUID(),
@@ -437,6 +451,10 @@ class POSSaleModel {
           paidAmount,
           changeAmount,
           notes: notes || null,
+          salesPerson: commission.salesPerson?.name || null,
+          salesPersonId: commission.salesPerson?.id || null,
+          commissionPercent: commission.commissionPercent,
+          commissionAmount: commission.commissionAmount,
           status: 'Completed',
           orderId: linkedRestaurantOrderId || null,
           journalEntryId: journalEntry.id,

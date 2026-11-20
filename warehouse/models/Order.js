@@ -6,30 +6,21 @@ const {
   reserveLocationStock,
   releaseLocationReservation,
 } = require('../services/locationService');
-
-// ─── Generate Order Number Function ──────────────────────
-function generateOrderNumber(orderType) {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-  
-  let prefix = 'ORD';
-  if (orderType === 'Sales Order') prefix = 'SO';
-  else if (orderType === 'Purchase Order') prefix = 'PO';
-  
-  return `${prefix}-${year}${month}${day}-${random}`;
-}
+const { allocateNextNumber } = require('../../services/documentNumberingService');
 
 class OrderModel {
   // ============================================================
   // CREATE ORDER (Sales or Purchase)
   // ============================================================
   static async create(data) {
-    const orderNumber = generateOrderNumber(data.orderType || 'Sales Order');
-    
     return await prisma.$transaction(async (tx) => {
+      const docType =
+        data.orderType === 'Purchase Order' ? 'purchase-order' : 'sale-order';
+      const orderNumber = await allocateNextNumber(data.companyId, docType, {
+        tx,
+        manualNumber: data.orderNumber || null,
+      });
+
       // Warehouse is optional: only resolve when explicitly provided
       const locationId = data.locationId
         ? await resolveLocationId(

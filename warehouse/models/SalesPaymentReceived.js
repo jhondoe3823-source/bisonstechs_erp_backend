@@ -5,16 +5,7 @@ const prisma = require('../../prisma/client');
 const BalanceCalculator = require('../../utils/balanceCalculator');
 const { getOrCreateCashAccount } = require('../../utils/cashAccountHelper');
 const { getOrCreateArAccount } = require('../../utils/arAccountHelper');
-
-// ─── Generate Payment Number ──────────────────────────────
-function generatePaymentNumber() {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-  return `SP-${year}${month}${day}-${random}`;
-}
+const { allocateNextNumber } = require('../../services/documentNumberingService');
 
 function paymentFingerprint({ companyId, customerId, amount, invoicePayments }) {
   const parts = (invoicePayments || [])
@@ -83,8 +74,6 @@ class SalesPaymentReceivedModel {
   // RECEIVE PAYMENT AGAINST INVOICES
   // ============================================================
   static async receivePayment(data) {
-    const paymentNumber = generatePaymentNumber();
-
     return await prisma.$transaction(async (tx) => {
       const {
         customerId,
@@ -113,6 +102,10 @@ class SalesPaymentReceivedModel {
 
       if (!amount || amount <= 0) {
         throw new Error('Payment amount must be greater than 0');
+      }
+
+      if (!companyId) {
+        throw new Error('Company is required');
       }
 
       // ─── Idempotency (client key and/or allocation fingerprint) ─
@@ -321,6 +314,9 @@ class SalesPaymentReceivedModel {
           debitAccountCode = bankGLAccount.code;
         }
       }
+
+      // ─── Allocate series number after validation / idempotency ─
+      const paymentNumber = await allocateNextNumber(companyId, 'sale-payment', { tx });
 
       // ─── Create Journal Entry (idempotent reference when keyed) ─
       const entryNumber = `JE-${Date.now()}-${Math.floor(Math.random() * 10000)}`;

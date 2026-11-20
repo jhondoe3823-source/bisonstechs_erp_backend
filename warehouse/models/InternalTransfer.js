@@ -97,7 +97,7 @@ async function getById(id, companyId) {
       creator:      { select: { id: true, firstName: true, lastName: true, email: true } },
       items: {
         include: {
-          product: { select: { id: true, name: true, sku: true, unit: true } },
+          product: { select: { id: true, name: true, sku: true, stockUnitName: true } },
         },
       },
       history: {

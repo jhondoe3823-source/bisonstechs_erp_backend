@@ -19,7 +19,8 @@ const completeSale = async (req, res) => {
     const userId    = req.user.id;
     const companyId = req.user.companyId;
     const { id, terminalId, customerId, customerName, customerEmail, customerPhone,
-            items, payments, discountTotal, taxTotal, notes, isOffline, offlineCreatedAt } = req.body;
+            items, payments, discountTotal, taxTotal, notes, isOffline, offlineCreatedAt,
+            salesPersonId, commissionPercent } = req.body;
 
     if (!items || items.length === 0)    return res.status(400).json({ success: false, message: 'At least one item is required' });
     if (!payments || payments.length === 0) return res.status(400).json({ success: false, message: 'At least one payment is required' });
@@ -33,6 +34,11 @@ const completeSale = async (req, res) => {
       discountTotal: discountTotal || 0,
       taxTotal:      taxTotal      || 0,
       notes,
+      salesPersonId: salesPersonId || null,
+      commissionPercent:
+        commissionPercent !== undefined && commissionPercent !== null
+          ? commissionPercent
+          : undefined,
       locationId: req.body.locationId || null,
       companyId, createdBy: userId,
       isOffline:        !!isOffline,

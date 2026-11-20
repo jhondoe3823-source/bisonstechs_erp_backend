@@ -450,10 +450,24 @@ exports.register = async (req, res) => {
 
     console.log('🎭 [register] Assigned role:', userRole);
 
-    // Create Company first
+    // Create Company first (with unique tenant subdomain slug)
+    const { allocateUniqueCompanySlug, slugifyCompanyName, isValidSlugFormat } =
+      require('../utils/companySlug');
+    const companyName =
+      organizationName || `${firstName} ${lastName}'s Company`;
+    const requestedSlug = req.body?.slug
+      ? slugifyCompanyName(req.body.slug)
+      : '';
+    const slugSeed =
+      requestedSlug && isValidSlugFormat(requestedSlug)
+        ? requestedSlug
+        : companyName;
+    const companySlug = await allocateUniqueCompanySlug(slugSeed);
+
     const company = await prisma.company.create({
       data: {
-        name: organizationName || `${firstName} ${lastName}'s Company`,
+        name: companyName,
+        slug: companySlug,
         email: email,
         phone: phone || '',
         address: address || '',
@@ -702,6 +716,12 @@ exports.register = async (req, res) => {
         businessDetails: user.businessDetails || {},
         role: user.role,
         companyId: company.id,
+        companySlug: company.slug,
+        company: {
+          id: company.id,
+          name: company.name,
+          slug: company.slug,
+        },
         subscription: {
           plan: user.subscription.plan,
           status: user.subscription.status,

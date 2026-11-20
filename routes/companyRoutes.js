@@ -4,6 +4,10 @@ const router = require('express').Router();
 const { protectOnly } = require('../middleware/authMiddleware');
 const ctrl = require('../controllers/companyController');
 
+// Public tenant subdomain helpers (no auth)
+router.get('/check-slug', ctrl.checkSlug);
+router.get('/resolve-slug/:slug', ctrl.resolveSlug);
+
 router.get('/mine', protectOnly, ctrl.listMyCompanies);
 router.post('/', protectOnly, ctrl.createCompany);
 router.put('/active', protectOnly, ctrl.setPrimaryCompany);

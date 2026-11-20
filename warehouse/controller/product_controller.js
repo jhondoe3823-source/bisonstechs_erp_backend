@@ -14,6 +14,7 @@ const {
   serializeUnitsForApi,
   buildUnitsFromLegacyProduct,
 } = require('../services/productUnitService');
+const { scheduleProductStockAlerts } = require('../services/stockAlertService');
 
 function parseUnitsPayload(data) {
   if (!data) return null;
@@ -1189,6 +1190,9 @@ const updateProduct = async (req, res) => {
     console.log('✅ [updateProduct] Product updated successfully:', product.id);
 
     const unitPayload = serializeUnitsForApi(savedUnits, product);
+
+    // Re-check low stock / expiry after min stock or expiry changes
+    scheduleProductStockAlerts(product.id, { companyId });
 
     res.status(200).json({
       success: true,

@@ -37,8 +37,14 @@ async function generateSequence(model, companyId, prefix, field = 'opportunityNu
 
 function dateFilter(query) {
   const f = {};
-  if (query.dateFrom) f.gte = new Date(query.dateFrom);
-  if (query.dateTo)   f.lte = new Date(query.dateTo);
+  if (query.dateFrom) {
+    const gte = new Date(query.dateFrom);
+    if (!Number.isNaN(gte.getTime())) f.gte = gte;
+  }
+  if (query.dateTo) {
+    const lte = new Date(query.dateTo);
+    if (!Number.isNaN(lte.getTime())) f.lte = lte;
+  }
   return Object.keys(f).length ? f : null;
 }
 

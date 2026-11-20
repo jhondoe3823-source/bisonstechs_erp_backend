@@ -1,20 +1,16 @@
 // models/WarehouseInvoice.js - COMPLETE FIXED VERSION (No Draft)
 
 const prisma = require('../../prisma/client');
-
-function generateInvoiceNumber() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-  return `WINV-${y}${m}${day}-${random}`;
-}
+const { allocateNextNumber } = require('../../services/documentNumberingService');
 
 class WarehouseInvoiceModel {
   static async create(data) {
-    const invoiceNumber = generateInvoiceNumber();
     return prisma.$transaction(async (tx) => {
+      const invoiceNumber = await allocateNextNumber(data.companyId, 'sale-invoice', {
+        tx,
+        manualNumber: data.invoiceNumber || null,
+      });
+
       // ✅ FIXED: invoiceStatus always 'Unpaid' (no Draft)
       const invoice = await tx.warehouseInvoice.create({
         data: {

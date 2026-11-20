@@ -170,6 +170,8 @@ app.use('/api/warehouse/sales', warehouseSalesRoutes);
 app.use('/api/warehouse/customers', customerRoutes);
 app.use('/api/warehouse/returns', SalesreturnsRoutes);
 app.use('/api/sales/refunds', refundRoutes);
+app.use('/api/settings/document-numbering', require('./routes/documentNumberingRoutes'));
+app.use('/api/settings/sales-agents', require('./routes/salesAgentSettingsRoutes'));
 app.use('/api/settings', settingRoutes);
 app.use('/api/warehouse/dashboard', DashboardRoutes);
 app.use('/api/warehouse/stock', StockRoutes);

@@ -18,6 +18,7 @@ const BalanceCalculator = require('../utils/balanceCalculator');
 const { resolveFiscalYearId } = require('../utils/fiscalYearHelper');
 const { getEffectivePermissions } = require('./permissionService');
 const { sendToUser, sendToUsers } = require('./notificationService');
+const { allocateNextNumber } = require('./documentNumberingService');
 
 const CUSTOMS_APPROVE_PERMISSION = 'import.customs.approve';
 
@@ -1320,9 +1321,8 @@ async function createCustomsClearanceEnterprise(req, data = {}) {
     throw customsError(err.message, err.field || 'exchangeRateDate', err.code || 'RATE_DATE_INVALID');
   }
 
-  const count = await prisma.importCustomsClearance.count({ where: { companyId } });
-  const year = new Date().getFullYear();
-  const entryNumber = data.entryNumber || `ICC-${year}-${String(count + 1).padStart(3, '0')}`;
+  const entryNumber =
+    data.entryNumber || (await allocateNextNumber(companyId, 'import-customs'));
 
   const totals = preview;
   const hsCodes = totals.lines.map((l) => l.hsCode);

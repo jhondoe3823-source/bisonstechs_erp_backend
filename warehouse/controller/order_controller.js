@@ -3,19 +3,16 @@
 const Order = require('../models/Order');
 const prisma = require('../../prisma/client');
 const { resolveLocationId } = require('../services/locationService');
+const { allocateNextNumber } = require('../../services/documentNumberingService');
 
 // ============================================================
 // HELPER: Auto-Generate Invoice
 // ============================================================
 const autoGenerateInvoice = async (order, userId, companyId) => {
   try {
-    const year = new Date().getFullYear();
-    const month = String(new Date().getMonth() + 1).padStart(2, '0');
-    const day = String(new Date().getDate()).padStart(2, '0');
-    const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-    
-    const prefix = order.orderType === 'Sales Order' ? 'SI' : 'PI';
-    const invoiceNumber = `${prefix}-${year}${month}${day}-${random}`;
+    const docType =
+      order.orderType === 'Purchase Order' ? 'purchase-invoice' : 'sale-invoice';
+    const invoiceNumber = await allocateNextNumber(companyId, docType);
 
     const invoice = await prisma.warehouseInvoice.create({
       data: {

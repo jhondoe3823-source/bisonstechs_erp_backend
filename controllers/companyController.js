@@ -68,6 +68,7 @@ function companyPublic(c) {
   return {
     id: c.id,
     name: c.name,
+    slug: c.slug || null,
     email: c.email,
     phone: c.phone,
     address: c.address,
@@ -87,6 +88,96 @@ function companyPublic(c) {
     createdAt: c.createdAt,
   };
 }
+
+// GET /api/companies/check-slug?slug=acme — public availability
+exports.checkSlug = async (req, res) => {
+  try {
+    const {
+      slugifyCompanyName,
+      isValidSlugFormat,
+      isReservedSlug,
+    } = require('../utils/companySlug');
+    const raw = String(req.query.slug || req.query.name || '').trim();
+    const slug = slugifyCompanyName(raw);
+    if (!slug || slug.length < 2) {
+      return res.json({
+        success: true,
+        data: {
+          slug: '',
+          available: false,
+          reason: 'too_short',
+          message: 'Slug must be at least 2 characters',
+        },
+      });
+    }
+    if (isReservedSlug(slug)) {
+      return res.json({
+        success: true,
+        data: {
+          slug,
+          available: false,
+          reason: 'reserved',
+          message: 'This subdomain is reserved',
+        },
+      });
+    }
+    if (!isValidSlugFormat(slug)) {
+      return res.json({
+        success: true,
+        data: {
+          slug,
+          available: false,
+          reason: 'invalid',
+          message: 'Use lowercase letters, numbers, and hyphens only',
+        },
+      });
+    }
+    const existing = await prisma.company.findFirst({
+      where: { slug },
+      select: { id: true },
+    });
+    return res.json({
+      success: true,
+      data: {
+        slug,
+        available: !existing,
+        reason: existing ? 'taken' : null,
+        message: existing ? 'This subdomain is already taken' : 'Available',
+        previewHost: `${slug}.${process.env.TENANT_ROOT_DOMAIN || 'bisonstechs.com'}`,
+      },
+    });
+  } catch (err) {
+    console.error('checkSlug error:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// GET /api/companies/resolve-slug/:slug — public tenant lookup for proxy
+exports.resolveSlug = async (req, res) => {
+  try {
+    const { findCompanyBySlug } = require('../utils/companySlug');
+    const company = await findCompanyBySlug(req.params.slug);
+    if (!company) {
+      return res.status(404).json({
+        success: false,
+        code: 'COMPANY_NOT_FOUND',
+        message: 'No company found for this subdomain',
+      });
+    }
+    return res.json({
+      success: true,
+      data: {
+        id: company.id,
+        name: company.name,
+        slug: company.slug,
+        logo: company.logo,
+      },
+    });
+  } catch (err) {
+    console.error('resolveSlug error:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
 
 // GET /api/companies/mine
 exports.listMyCompanies = async (req, res) => {
@@ -201,9 +292,17 @@ exports.createCompany = async (req, res) => {
       }
     }
 
+    const { allocateUniqueCompanySlug, slugifyCompanyName, isValidSlugFormat } =
+      require('../utils/companySlug');
+    const requestedSlug = body.slug ? slugifyCompanyName(body.slug) : '';
+    const slugSeed =
+      requestedSlug && isValidSlugFormat(requestedSlug) ? requestedSlug : name;
+    const slug = await allocateUniqueCompanySlug(slugSeed);
+
     const company = await prisma.company.create({
       data: {
         name,
+        slug,
         email: body.email ? String(body.email).trim() : null,
         phone: body.phone ? String(body.phone).trim() : '',
         address: body.address ? String(body.address).trim() : '',
@@ -293,6 +392,14 @@ exports.createCompany = async (req, res) => {
       await ensureHrMasterFixtures(company.id);
     } catch (hrFixtureErr) {
       console.error('createCompany HR master fixtures warning:', hrFixtureErr.message);
+    }
+
+    // Default units of measure + product stockUnit picklist
+    try {
+      const { ensureDefaultUoms } = require('../warehouse/services/uomService');
+      await ensureDefaultUoms(company.id, { createdBy: userId });
+    } catch (uomErr) {
+      console.error('createCompany UOM fixtures warning:', uomErr.message);
     }
 
     // Business model config: children inherit parent; root uses request or defaults

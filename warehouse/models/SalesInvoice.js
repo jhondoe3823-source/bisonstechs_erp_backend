@@ -14,15 +14,10 @@ const {
   applySalesInvoiceStockOut,
   reverseSalesInvoiceStockOut,
 } = require('../services/inventoryService');
+const { allocateNextNumber } = require('../../services/documentNumberingService');
 
-// ─── Generate Invoice Number Function ──────────────────────
-function generateInvoiceNumber() {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-  return `SI-${year}${month}${day}-${random}`;
+async function nextSalesInvoiceNumber(companyId, tx, manualNumber = null) {
+  return allocateNextNumber(companyId, 'sale-invoice', { tx, manualNumber });
 }
 
 async function findARAccount(tx, companyId, userId) {
@@ -114,7 +109,7 @@ class SalesInvoiceModel {
   // ============================================================
   // CREATE SALES INVOICE FROM ORDER
   // ============================================================
-  static async createFromOrder(orderId, userId, dueDate, paymentTerms = 'Net 30', fiscalYearId) {
+  static async createFromOrder(orderId, userId, dueDate, paymentTerms = 'Net 30', fiscalYearId, agentOptions = {}) {
     return await prisma.$transaction(async (tx) => {
       const order = await tx.order.findUnique({
         where: { id: orderId },
@@ -153,7 +148,7 @@ class SalesInvoiceModel {
         deliveryNumber = order.deliveries[0].deliveryNumber;
       }
 
-      const invoiceNumber = generateInvoiceNumber();
+      const invoiceNumber = await nextSalesInvoiceNumber(companyId, tx);
       const invoiceDate = new Date();
       const dueDateObj = dueDate
         ? new Date(dueDate)
@@ -204,6 +199,23 @@ class SalesInvoiceModel {
 
       const orderLinkMeta = `__LINKED_ORDERS__:${JSON.stringify([order.id])}\n`;
 
+      const {
+        resolveAgentCommission,
+      } = require('../../services/salesAgentSettingsService');
+
+      const salesPersonId =
+        agentOptions.salesPersonId ||
+        order.salesPersonId ||
+        null;
+      const commission = await resolveAgentCommission({
+        companyId,
+        salesPersonId,
+        grandTotal,
+        overridePercent: agentOptions.commissionPercent,
+        atDate: invoiceDate,
+        client: tx,
+      });
+
       const invoice = await tx.salesInvoice.create({
         data: {
           invoiceNumber,
@@ -231,6 +243,10 @@ class SalesInvoiceModel {
           notes: order.customerNotes
             ? `${orderLinkMeta}${order.customerNotes}`
             : orderLinkMeta,
+          salesPerson: commission.salesPerson?.name || order.salesPerson || null,
+          salesPersonId: commission.salesPerson?.id || null,
+          commissionPercent: commission.commissionPercent,
+          commissionAmount: commission.commissionAmount,
           salesRevenueAccountId: revenueAccount?.id || null,
           arAccountId: arAccount?.id || null,
           createdBy: userId,          // ✅ Use createdBy
@@ -288,7 +304,7 @@ class SalesInvoiceModel {
       const customerId = delivery.customerId;
       const customer = delivery.customer;
 
-      const invoiceNumber = generateInvoiceNumber();
+      const invoiceNumber = await nextSalesInvoiceNumber(companyId, tx);
       const invoiceDate = new Date();
       const dueDateObj = dueDate
         ? new Date(dueDate)
@@ -667,7 +683,7 @@ class SalesInvoiceModel {
       }
 
       // ── 4. Build Sales Invoice Items & Calculations ───────
-      const invoiceNumber = generateInvoiceNumber();
+      const invoiceNumber = await nextSalesInvoiceNumber(companyId, tx);
       const invoiceDate = new Date();
       const dueDateObj = dueDate
         ? new Date(dueDate)
@@ -893,7 +909,7 @@ class SalesInvoiceModel {
         }
       }
 
-      const invoiceNumber = generateInvoiceNumber();
+      const invoiceNumber = await nextSalesInvoiceNumber(companyId, tx);
       const invoiceDate = new Date();
       const dueDateObj = dueDate
         ? new Date(dueDate)

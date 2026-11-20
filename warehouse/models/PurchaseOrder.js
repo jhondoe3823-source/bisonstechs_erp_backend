@@ -6,26 +6,19 @@ const {
   resolveTransactionCurrency,
   buildCurrencyPersistFields,
 } = require('../../utils/multiCurrency');
-
-// ─── Generate Order Number Function ──────────────────────
-function generateOrderNumber() {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-  
-  return `PO-${year}${month}${day}-${random}`;
-}
+const { allocateNextNumber } = require('../../services/documentNumberingService');
 
 class PurchaseOrderModel {
   // ============================================================
   // CREATE PURCHASE ORDER
   // ============================================================
   static async create(data) {
-    const orderNumber = generateOrderNumber();
-    
     return await prisma.$transaction(async (tx) => {
+      const orderNumber = await allocateNextNumber(data.companyId, 'purchase-order', {
+        tx,
+        manualNumber: data.orderNumber || null,
+      });
+
       // ─── Validate Supplier ──────────────────────────────────
       const supplierId = String(data.supplierId || '').trim();
       const supplier = await tx.supplier.findFirst({

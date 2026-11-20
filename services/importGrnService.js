@@ -12,6 +12,7 @@ const {
   assertRecordCompanyAccess,
   assertLocationBelongsToActiveCompany,
 } = require('../utils/companyAccess');
+const { allocateNextNumber } = require('./documentNumberingService');
 
 const IMPORT_GRN_POSTED_STATUSES = ['Posted', 'Inspected & Received', 'Confirmed', 'Received'];
 const CUSTOMS_RELEASED_STATUSES = ['Released/Cleared', 'Cleared', 'Out of Charge', 'Released'];
@@ -1211,9 +1212,9 @@ async function createGrn(req, data) {
         });
       }
 
-      const count = await tx.importGrn.count({ where: { companyId } });
-      const year = new Date().getFullYear();
-      const grnNumber = data.grnNumber || `IGRN-${year}-${String(count + 1).padStart(3, '0')}`;
+      const grnNumber =
+        data.grnNumber ||
+        (await allocateNextNumber(companyId, 'import-grn', { tx }));
 
       const initialStatus = shouldPost ? 'Posted' : 'Draft';
 

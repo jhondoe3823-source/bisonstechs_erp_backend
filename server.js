@@ -77,7 +77,22 @@ try {
   process.exit(1);
 }
 
-runPendingMigrations().then(() => {
+runPendingMigrations()
+  .then(async () => {
+    // Heal P2022 drift (e.g. Railway migrate history stuck behind schema).
+    if (isRailway) {
+      try {
+        const { ensureCriticalColumns } = require('./scripts/ensure-critical-columns');
+        await ensureCriticalColumns();
+      } catch (err) {
+        console.error(
+          '[boot] ensure-critical-columns failed (continuing):',
+          (err && err.message) || err
+        );
+      }
+    }
+  })
+  .then(() => {
   const server = app.listen(PORT, HOST, () => {
     const addr = server.address();
     console.log(

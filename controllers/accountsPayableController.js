@@ -31,7 +31,6 @@ async function getOrCreatePayableAccount(userId, companyId, tx) {
   return getOrCreateApAccount(userId, companyId, tx);
 }
 
-// ─── HELPER: Get or create Expense account ────────────────────────
 async function getOrCreateExpenseAccount(userId, companyId, tx) {
   const db = tx || prisma;
   console.log('🔍 [AP] Getting/Creating Expense account');
@@ -69,7 +68,6 @@ async function getOrCreateExpenseAccount(userId, companyId, tx) {
   return expenseAccount;
 }
 
-// ─── HELPER: Generate bill number - FIXED ─────────────────────────────────
 async function generateBillNumber(companyId, attemptOffset = 0, tx = null) {
   if (!companyId) {
     throw new Error('companyId is required to generate a bill number');
@@ -78,7 +76,6 @@ async function generateBillNumber(companyId, attemptOffset = 0, tx = null) {
   const db = tx || prisma;
   const prefix = 'BILL-';
 
-  // Serialize bill-number allocation per company (prevents Vercel race → same BILL-0001)
   if (tx) {
     await tx.$executeRaw`
       SELECT pg_advisory_xact_lock(hashtext(${`bill-seq:${companyId}`}))
@@ -111,16 +108,13 @@ async function generateBillNumber(companyId, attemptOffset = 0, tx = null) {
   return billNumber;
 }
 
-// ─── HELPER: Generate fallback bill number ─────────────────────────────────
 async function generateFallbackBillNumber(companyId) {
   const short = String(companyId || 'X').replace(/-/g, '').slice(0, 6).toUpperCase();
   const stamp = Date.now().toString(36).toUpperCase();
   const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-  // Company fragment avoids cross-tenant collisions even if a global unique still exists
   return `BILL-${short}-${stamp}${random}`.slice(0, 32);
 }
 
-// ─── HELPER: Validate bank account ────────────────────────────────
 async function validateBankAccount(bankAccountId, companyId, tx) {
   const db = tx || prisma;
   if (!bankAccountId) return null;
@@ -142,7 +136,6 @@ async function validateBankAccount(bankAccountId, companyId, tx) {
   return bankAccount;
 }
 
-// ─── HELPER: Determine bill status ───────────────────────────────
 function determineBillStatus(totalAmount, paidAmount, dueDate) {
   const outstanding = totalAmount - paidAmount;
   if (outstanding <= 0) return 'Paid';
@@ -318,14 +311,6 @@ async function fetchCompanyPurchaseInvoices(companyId, extraWhere = {}, location
     orderBy: { invoiceDate: 'desc' }
   });
 }
-
-// ============================================================
-// ✅ BILL NUMBER GENERATION
-// ============================================================
-
-// @desc    Get next bill number
-// @route   GET /api/accounts-payable/next-bill-number
-// @access  Private
 exports.getNextBillNumber = async (req, res) => {
   console.log('📦 [AP] getNextBillNumber called');
 
@@ -590,13 +575,7 @@ exports.getSupplier = async (req, res) => {
   }
 };
 
-// ============================================================
-// BILL CRUD
-// ============================================================
 
-// @desc    Create bill
-// @route   POST /api/accounts-payable/bills
-// @access  Private
 exports.createBill = async (req, res) => {
   console.log('📦 [AP] createBill called [bill-seq-v2]');
 
@@ -612,7 +591,6 @@ exports.createBill = async (req, res) => {
       });
     }
 
-    // Validate supplier
     const supplier = await prisma.supplier.findFirst({
       where: { id: supplierId, companyId: companyId }
     });
@@ -624,7 +602,6 @@ exports.createBill = async (req, res) => {
       });
     }
 
-    // Calculate totals
     let subtotal = 0;
     let taxTotal = 0;
     const processedItems = items.map(item => {
@@ -646,7 +623,6 @@ exports.createBill = async (req, res) => {
     const finalDueDate = dueDate ? new Date(dueDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     const status = determineBillStatus(totalAmount, 0, finalDueDate);
 
-    // ─── Retry loop handles race condition ───────────────────────
     const MAX_ATTEMPTS = 5;
     let result = null;
 
@@ -760,9 +736,7 @@ res.status(201).json({
     res.status(500).json({ success: false, message: error.message });
   }
 };
-// @desc    Get all bills
-// @route   GET /api/accounts-payable/bills
-// @access  Private
+
 exports.getBills = async (req, res) => {
   console.log('📦 [AP] getBills called');
 
@@ -797,7 +771,6 @@ exports.getBills = async (req, res) => {
       }
     }
 
-    // Don't push UI status into prisma Bill.status — compute after merge
     if (startDate && endDate) {
       filter.date = {
         gte: new Date(startDate),
@@ -931,9 +904,6 @@ exports.getBills = async (req, res) => {
   }
 };
 
-// @desc    Get single bill
-// @route   GET /api/accounts-payable/bills/:id
-// @access  Private
 exports.getBill = async (req, res) => {
   console.log('📦 [AP] getBill called');
 
@@ -1020,9 +990,6 @@ exports.getBill = async (req, res) => {
   }
 };
 
-// @desc    Update bill
-// @route   PUT /api/accounts-payable/bills/:id
-// @access  Private
 exports.updateBill = async (req, res) => {
   console.log('📦 [AP] updateBill called');
 
@@ -1200,13 +1167,6 @@ res.status(200).json({
   }
 };
 
-// ============================================================
-// PAYMENT FUNCTIONS
-// ============================================================
-
-// @desc    Record payment against bill OR purchase invoice (shown in AP)
-// @route   POST /api/accounts-payable/payments
-// @access  Private
 exports.recordPayment = async (req, res) => {
   console.log('📦 [AP] recordPayment called');
 
@@ -1238,7 +1198,6 @@ exports.recordPayment = async (req, res) => {
       });
     }
 
-    // Prefer accounting Bill; fall back to warehouse Purchase Invoice (AP list merges both)
     const bill = await prisma.bill.findFirst({
       where: { id: billId, companyId },
       include: { vendor: true }
@@ -1504,13 +1463,6 @@ exports.recordPayment = async (req, res) => {
   }
 };
 
-// ============================================================
-// SUMMARY & REPORTS
-// ============================================================
-
-// @desc    Get AP summary
-// @route   GET /api/accounts-payable/summary
-// @access  Private
 exports.getSummary = async (req, res) => {
   console.log('📦 [AP] getSummary called');
 
@@ -1563,9 +1515,6 @@ exports.getSummary = async (req, res) => {
   }
 };
 
-// @desc    Get aged payables report
-// @route   GET /api/accounts-payable/aged
-// @access  Private
 exports.getAgedPayables = async (req, res) => {
   console.log('📦 [AP] getAgedPayables called');
 

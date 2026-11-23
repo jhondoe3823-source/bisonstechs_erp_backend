@@ -133,6 +133,7 @@ class POSSaleModel {
       orderId = null,
       salesPersonId = null,
       commissionPercent: commissionPercentOverride,
+      allowMissingSalesAgent = false,
     } = data;
     const linkedRestaurantOrderId = restaurantOrderId || orderId || null;
 
@@ -425,14 +426,28 @@ class POSSaleModel {
       const {
         resolveAgentCommission,
       } = require('../../services/salesAgentSettingsService');
-      const commission = await resolveAgentCommission({
-        companyId,
-        salesPersonId: salesPersonId || null,
-        grandTotal,
-        overridePercent: commissionPercentOverride,
-        atDate: new Date(),
-        client: tx,
-      });
+      let commission;
+      try {
+        commission = await resolveAgentCommission({
+          companyId,
+          salesPersonId: salesPersonId || null,
+          grandTotal,
+          overridePercent: commissionPercentOverride,
+          atDate: new Date(),
+          client: tx,
+        });
+      } catch (agentErr) {
+        // Offline sync / recovery: never block upload solely because agent wasn't on the ticket
+        if (allowMissingSalesAgent || isOffline) {
+          commission = {
+            salesPerson: null,
+            commissionPercent: 0,
+            commissionAmount: 0,
+          };
+        } else {
+          throw agentErr;
+        }
+      }
 
       const sale = await tx.pOSSale.create({
         data: {
@@ -913,7 +928,16 @@ class POSSaleModel {
             continue;
           }
         }
-        
+
+        // Drop unknown / local-only shift ids so we can attach to an open cloud shift
+        if (shiftId && !String(shiftId).startsWith('local-shift-')) {
+          const knownShift = await prisma.pOSShift.findFirst({
+            where: { id: shiftId, companyId },
+            select: { id: true },
+          });
+          if (!knownShift) shiftId = null;
+        }
+
         if (!shiftId || String(shiftId).startsWith('local-shift-')) {
           // If no valid shift ID or local shift ID, get/create active shift
           const activeShift = await prisma.pOSShift.findFirst({
@@ -932,13 +956,13 @@ class POSSaleModel {
                 terminalId: terminalId,
                 status: 'Open',
                 openingCash: 0,
-                openingAt: new Date()
+                openedAt: new Date(),
               }
             });
             shiftId = newShift.id;
           }
         }
-        
+
         const result = await POSSaleModel.completeSale({
           ...tx,
           shiftId,
@@ -947,6 +971,8 @@ class POSSaleModel {
           createdBy,
           isOffline: true,
           skipStockChecks: true,
+          // Offline POS may not have captured a salesperson; don't block the whole sync queue
+          allowMissingSalesAgent: true,
         });
         results.push({ id: tx.id, invoiceNumber: result.sale.invoiceNumber, status: 'success' });
       } catch (err) {

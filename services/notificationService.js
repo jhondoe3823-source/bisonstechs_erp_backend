@@ -1,6 +1,6 @@
 /**
  * Notification inbox (Postgres) + OneSignal device push.
- * No live SSE stream.
+ * Delivery path is OneSignal (Flutter / desktop / web push) — not SSE.
  */
 const prisma = require('../prisma/client');
 const { sendPushToUser, buildExternalId } = require('./onesignal');
@@ -30,16 +30,23 @@ async function sendToUser({
   });
 
   let push = null;
+  let pushError = null;
   try {
     push = await sendPushToUser({
       mongoUserId: userId,
       subscriptionId,
       title: title || 'Notification',
       message: message || '',
-      data: data || {},
+      data: {
+        ...(data || {}),
+        notificationId: notification.id,
+        category,
+        type,
+      },
       collapseId,
     });
   } catch (err) {
+    pushError = err.message || String(err);
     console.error('[OneSignal] push failed:', err.response?.data || err.message);
   }
 
@@ -48,6 +55,8 @@ async function sendToUser({
     stored: true,
     push,
     deliveredLive: Boolean(push?.id),
+    pushError,
+    externalId: buildExternalId(userId),
   };
 }
 

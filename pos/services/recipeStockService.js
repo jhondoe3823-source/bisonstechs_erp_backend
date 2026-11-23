@@ -267,7 +267,7 @@ async function deductByRecipeForOrder(tx, {
 
   const locationId =
     order.locationId ||
-    (await resolveLocationId(tx, { companyId, required: false }));
+    (await resolveLocationId(tx, companyId, null, userId, { required: false }));
 
   const deductionKey = `kot:${order.id}`;
   const allMovements = [];

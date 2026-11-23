@@ -17,10 +17,12 @@ async function sendPushToUser({
   data = {},
   collapseId,
 }) {
-  const appId = process.env.ONESIGNAL_APP_ID;
-  const apiKey = process.env.ONESIGNAL_REST_API_KEY;
+  const appId = String(process.env.ONESIGNAL_APP_ID || '').trim();
+  const apiKey = String(process.env.ONESIGNAL_REST_API_KEY || '').trim();
   if (!appId || !apiKey) {
-    throw new Error('ONESIGNAL_APP_ID / ONESIGNAL_REST_API_KEY not set');
+    throw new Error(
+      'ONESIGNAL_APP_ID / ONESIGNAL_REST_API_KEY not set — fill both in backend .env to send device push'
+    );
   }
 
   const externalId = buildExternalId(mongoUserId);

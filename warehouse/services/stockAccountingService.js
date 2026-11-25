@@ -163,31 +163,51 @@ async function findOrCreateInventoryAccount(tx, companyId, userId) {
 }
 
 async function findOrCreateEquityAccount(tx, companyId, userId, preferCode) {
-  const codes = preferCode ? [preferCode, '3010', '3001'] : ['3010', '3001'];
+  const code = preferCode || '3010';
+  const wantOpeningEquity = code === '3010';
+
+  // Resolve by preferred code first so Owner's Capital is never accidentally used
+  // as the opening-balance clearing account.
   let account = await tx.chartOfAccount.findFirst({
-    where: {
-      companyId,
-      isActive: true,
-      OR: [
-        ...codes.map((code) => ({ code })),
-        { name: { contains: 'Opening Balance Equity', mode: 'insensitive' } },
-        { name: { contains: "Owner's Capital", mode: 'insensitive' } },
-        { name: { contains: 'Owner Capital', mode: 'insensitive' } },
-      ],
-    },
+    where: { companyId, isActive: true, code },
   });
+
+  if (!account && wantOpeningEquity) {
+    account = await tx.chartOfAccount.findFirst({
+      where: {
+        companyId,
+        isActive: true,
+        name: { equals: 'Opening Balance Equity', mode: 'insensitive' },
+      },
+    });
+  }
+
+  if (!account && code === '3001') {
+    account = await tx.chartOfAccount.findFirst({
+      where: {
+        companyId,
+        isActive: true,
+        OR: [
+          { name: { equals: "Owner's Capital", mode: 'insensitive' } },
+          { name: { contains: 'Owner Capital', mode: 'insensitive' } },
+        ],
+      },
+    });
+  }
 
   if (!account) {
     account = await tx.chartOfAccount.create({
       data: {
-        code: preferCode || '3010',
-        name: 'Opening Balance Equity',
+        code,
+        name: wantOpeningEquity ? 'Opening Balance Equity' : "Owner's Capital",
         type: 'Equity',
         parentAccount: 'Equity',
         openingBalance: 0,
         currentBalance: 0,
         balanceType: 'Credit',
-        description: 'Opening balance equity — stock movements',
+        description: wantOpeningEquity
+          ? 'Opening balance equity — stock movements'
+          : 'Owner capital / equity contributions',
         isActive: true,
         createdBy: userId || 'SYSTEM',
         companyId,

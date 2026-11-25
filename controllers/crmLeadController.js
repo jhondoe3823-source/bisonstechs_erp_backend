@@ -101,7 +101,7 @@ const getLeads = async (req, res) => {
     if (!companyId) return res.status(400).json({ success: false, message: 'Company context required' });
 
     const {
-      page = 1, limit = 50, status, source, assignedToId, search, boardId,
+      page = 1, limit = 50, status, source, assignedToId, createdBy, search, boardId,
       priority, tags, sortBy = 'createdAt', sortDir = 'desc', isDeleted = '0',
       dateFrom, dateTo,
     } = req.query;
@@ -111,12 +111,24 @@ const getLeads = async (req, res) => {
       isDeleted: isDeleted === '1',
     };
 
-    if (status) where.status = status;
-    if (source) where.source = source;
-    if (assignedToId) where.assignedToId = assignedToId;
-    if (boardId) where.boardId = boardId;
-    if (priority) where.priority = priority;
-    if (tags) where.tags = { hasSome: Array.isArray(tags) ? tags : [tags] };
+    const clean = (v) => {
+      if (v === undefined || v === null) return null;
+      const s = String(v).trim();
+      if (!s || s === 'undefined' || s === 'null') return null;
+      return s;
+    };
+    if (clean(status)) where.status = clean(status);
+    if (clean(source)) where.source = clean(source);
+    const assignee = clean(assignedToId);
+    if (assignee === '__unassigned__') where.assignedToId = null;
+    else if (assignee) where.assignedToId = assignee;
+    if (clean(createdBy)) where.createdBy = clean(createdBy);
+    if (clean(boardId)) where.boardId = clean(boardId);
+    if (clean(priority)) where.priority = clean(priority);
+    const tagList = Array.isArray(tags)
+      ? tags.map(clean).filter(Boolean)
+      : (clean(tags) ? [clean(tags)] : []);
+    if (tagList.length) where.tags = { hasSome: tagList };
 
     if (dateFrom || dateTo) {
       where.createdAt = {};
@@ -124,16 +136,19 @@ const getLeads = async (req, res) => {
       if (dateTo) where.createdAt.lte = new Date(dateTo);
     }
 
-    if (search) {
+    const searchTerm = clean(search);
+    if (searchTerm) {
       where.OR = [
-        { fullName: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { phone: { contains: search, mode: 'insensitive' } },
-        { whatsapp: { contains: search, mode: 'insensitive' } },
-        { companyName: { contains: search, mode: 'insensitive' } },
-        { city: { contains: search, mode: 'insensitive' } },
-        { leadNumber: { contains: search, mode: 'insensitive' } },
-        { interest: { contains: search, mode: 'insensitive' } },
+        { fullName: { contains: searchTerm, mode: 'insensitive' } },
+        { email: { contains: searchTerm, mode: 'insensitive' } },
+        { phone: { contains: searchTerm, mode: 'insensitive' } },
+        { whatsapp: { contains: searchTerm, mode: 'insensitive' } },
+        { companyName: { contains: searchTerm, mode: 'insensitive' } },
+        { city: { contains: searchTerm, mode: 'insensitive' } },
+        { leadNumber: { contains: searchTerm, mode: 'insensitive' } },
+        { interest: { contains: searchTerm, mode: 'insensitive' } },
+        { jobTitle: { contains: searchTerm, mode: 'insensitive' } },
+        { territory: { contains: searchTerm, mode: 'insensitive' } },
       ];
     }
 
@@ -154,6 +169,74 @@ const getLeads = async (req, res) => {
     });
   } catch (err) {
     console.error('[CRM] getLeads error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/** Distinct assignees / creators / tags for list filter dropdowns */
+const getLeadFilterOptions = async (req, res) => {
+  try {
+    const companyId = getCompanyId(req);
+    if (!companyId) return res.status(400).json({ success: false, message: 'Company context required' });
+
+    const leads = await prisma.lead.findMany({
+      where: { companyId, isDeleted: false },
+      select: {
+        assignedToId: true,
+        createdBy: true,
+        tags: true,
+        assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
+        creator: { select: { id: true, firstName: true, lastName: true, email: true } },
+      },
+      take: 2000,
+    });
+
+    const assigneesMap = new Map();
+    const creatorsMap = new Map();
+    const tagsSet = new Set();
+    let unassignedCount = 0;
+
+    for (const lead of leads) {
+      if (!lead.assignedToId) unassignedCount += 1;
+      if (lead.assignedTo?.id) {
+        assigneesMap.set(lead.assignedTo.id, {
+          id: lead.assignedTo.id,
+          label: `${lead.assignedTo.firstName || ''} ${lead.assignedTo.lastName || ''}`.trim() || lead.assignedTo.email,
+        });
+      }
+      if (lead.creator?.id) {
+        creatorsMap.set(lead.creator.id, {
+          id: lead.creator.id,
+          label: `${lead.creator.firstName || ''} ${lead.creator.lastName || ''}`.trim() || lead.creator.email,
+        });
+      }
+      for (const tag of lead.tags || []) {
+        if (tag && String(tag).trim()) tagsSet.add(String(tag).trim());
+      }
+    }
+
+    // Always include current user so Assign / Created By still work with empty lists
+    if (req.user?.id) {
+      const selfLabel = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || req.user.email || 'Me';
+      if (!assigneesMap.has(req.user.id)) {
+        assigneesMap.set(req.user.id, { id: req.user.id, label: selfLabel });
+      }
+      if (!creatorsMap.has(req.user.id)) {
+        creatorsMap.set(req.user.id, { id: req.user.id, label: selfLabel });
+      }
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        assignees: Array.from(assigneesMap.values()).sort((a, b) => a.label.localeCompare(b.label)),
+        creators: Array.from(creatorsMap.values()).sort((a, b) => a.label.localeCompare(b.label)),
+        tags: Array.from(tagsSet).sort((a, b) => a.localeCompare(b)),
+        unassignedCount,
+      },
+    });
+  } catch (err) {
+    console.error('[CRM] getLeadFilterOptions error:', err);
     return res.status(500).json({ success: false, message: err.message });
   }
 };
@@ -925,7 +1008,7 @@ const exportLeads = async (req, res) => {
 };
 
 module.exports = {
-  getLeads, getLeadById, createLead, updateLead, deleteLead,
+  getLeads, getLeadFilterOptions, getLeadById, createLead, updateLead, deleteLead,
   bulkUpdateLeads, updateLeadBoardOrder, addLeadNote, convertLead,
   getDashboard, getCustomFields, createCustomField, updateCustomField, deleteCustomField, reorderCustomFields,
   getBoards, createBoard, getDefaultBoard,

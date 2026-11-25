@@ -310,6 +310,13 @@ const addStock = async (req, res) => {
       if (stockSourceReason === 'opening_stock') {
         productExpiryPatch.openingStockPosted = true;
         productExpiryPatch.openingStock = totalPieces;
+        // Persist valuation so later sales can compute COGS.
+        if (unitCostPerBase > 0) {
+          productExpiryPatch.costPrice = unitCostPerBase;
+          productExpiryPatch.averageCost = unitCostPerBase;
+          productExpiryPatch.lastPurchasePrice = unitCostPerBase;
+          productExpiryPatch.standardCost = unitCostPerBase;
+        }
       }
       if (Object.keys(productExpiryPatch).length) {
         await tx.product.update({

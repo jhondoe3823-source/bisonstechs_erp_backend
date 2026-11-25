@@ -298,6 +298,11 @@ const createManualInvoice = async (req, res) => {
     }
 
     // ─── Create Invoice ──────────────────────────────────
+    const isOpeningBalance =
+      req.body?.isOpeningBalance === true ||
+      req.body?.isOpeningBalance === 'true' ||
+      String(notes || '').includes('OPENING-BALANCE');
+
     const invoiceData = {
       customerId: customerId || '',
       customerName: customerName,
@@ -307,6 +312,7 @@ const createManualInvoice = async (req, res) => {
       shippingAddress: shippingAddress || {},
       items: processedItems,
       dueDate: dueDate,
+      invoiceDate: postingDate,
       paymentTerms: paymentTerms,
       notes: notes,
       userId: userId,
@@ -314,12 +320,17 @@ const createManualInvoice = async (req, res) => {
       fiscalYearId: fiscalYearId,
       companyId: companyId,  // ✅ Added companyId
       locationId: locationId || null,
+      isOpeningBalance,
       ...installmentInput,
     };
 
     const invoice = await SalesInvoice.createManual(invoiceData);
 
-    const postedInvoice = await SalesInvoice.postInvoice(invoice.id, userId);
+    // Opening-balance invoices stay Draft (GL already booked via OB journal).
+    // Callers that need GL should use isOpeningBalance=false (default).
+    const postedInvoice = isOpeningBalance
+      ? invoice
+      : await SalesInvoice.postInvoice(invoice.id, userId);
 
     await taxCalculationService.recordFromDocument({
       companyId,

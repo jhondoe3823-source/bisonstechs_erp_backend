@@ -7,23 +7,24 @@ const { getOrCreateCashAccount } = require('../utils/cashAccountHelper');
 const { pickRequestedLocationId } = require('../utils/locationAccessHelper');
 const { withLocation } = require('../utils/accountingLocationHelper');
 const { resolveLocationId } = require('../warehouse/services/locationService');
+// Aligned with services/defaultChartOfAccountsService.js (IFRS SME chart)
 const EXPENSE_ACCOUNT_MAPPING = {
-  'Rent': { code: '5100', name: 'Rent Expense' },
-  'Utilities': { code: '5200', name: 'Utilities Expense' },
-  'Salaries': { code: '5300', name: 'Salaries Expense' },
-  'Marketing': { code: '5400', name: 'Marketing Expense' },
-  'Office Supplies': { code: '5500', name: 'Office Supplies Expense' },
-  'Travel': { code: '5600', name: 'Travel Expense' },
-  'Meals': { code: '5700', name: 'Meals & Entertainment' },
-  'Insurance': { code: '5800', name: 'Insurance Expense' },
-  'Maintenance': { code: '5900', name: 'Maintenance Expense' },
-  'Software': { code: '6000', name: 'Software Expense' },
-  'Taxes': { code: '6100', name: 'Taxes Expense' },
-  'Miscellaneous': { code: '6900', name: 'Other Expenses' },
-  'Other': { code: '6900', name: 'Other Expenses' }
+  'Rent': { code: '6001', name: 'Rent Expense' },
+  'Utilities': { code: '6200', name: 'Utilities Expense' },
+  'Salaries': { code: '6100', name: 'Salary Expense' },
+  'Marketing': { code: '6500', name: 'Marketing Expense' },
+  'Office Supplies': { code: '6300', name: 'Office Expense' },
+  'Travel': { code: '6610', name: 'Travel Expense' },
+  'Meals': { code: '6620', name: 'Meals & Entertainment' },
+  'Insurance': { code: '6630', name: 'Insurance Expense' },
+  'Maintenance': { code: '6640', name: 'Repairs & Maintenance' },
+  'Software': { code: '6650', name: 'Software & Subscriptions' },
+  'Taxes': { code: '6860', name: 'Tax Expense' },
+  'Miscellaneous': { code: '6900', name: 'Miscellaneous Expense' },
+  'Other': { code: '6900', name: 'Miscellaneous Expense' },
 };
 
-const DEFAULT_EXPENSE_ACCOUNT = { code: '6900', name: 'Other Expenses' };
+const DEFAULT_EXPENSE_ACCOUNT = { code: '6900', name: 'Miscellaneous Expense' };
 
 function mapPurchasePaymentMethod(method) {
   const m = String(method || 'Cash');

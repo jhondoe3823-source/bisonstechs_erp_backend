@@ -8,21 +8,30 @@ const { getOrCreateCashAccount } = require('../../utils/cashAccountHelper');
 const { findOrCreateInventoryAccount } = require('./stockAccountingService');
 
 async function findOrCreateCOGSAccount(tx, companyId, userId) {
-  let acc = await tx.chartOfAccount.findFirst({
+  const candidates = await tx.chartOfAccount.findMany({
     where: {
       companyId,
       isActive: true,
       OR: [
+        { code: '5001' },
         { code: '5000' },
         { name: { contains: 'Cost of Goods', mode: 'insensitive' } },
         { name: { contains: 'COGS', mode: 'insensitive' } },
       ],
     },
+    orderBy: { code: 'asc' },
   });
+  let acc =
+    candidates.find((a) => String(a.code) === '5001') ||
+    candidates.find((a) => /cost of goods/i.test(a.name || '')) ||
+    candidates.find((a) => String(a.code) === '5000') ||
+    candidates[0] ||
+    null;
+
   if (!acc) {
     acc = await tx.chartOfAccount.create({
       data: {
-        code: '5000',
+        code: '5001',
         name: 'Cost of Goods Sold',
         type: 'Expense',
         parentAccount: 'Cost of Sales',
@@ -40,27 +49,35 @@ async function findOrCreateCOGSAccount(tx, companyId, userId) {
 }
 
 async function findOrCreateSalesReturnsAccount(tx, companyId, userId) {
-  let acc = await tx.chartOfAccount.findFirst({
+  // Prefer seeded 4300 / name match — never use 4100 (Service Revenue).
+  const candidates = await tx.chartOfAccount.findMany({
     where: {
       companyId,
       isActive: true,
       OR: [
-        { code: '4100' },
+        { code: '4300' },
         { name: { contains: 'Sales Return', mode: 'insensitive' } },
         { name: { contains: 'Allowances', mode: 'insensitive' } },
       ],
     },
+    orderBy: { code: 'asc' },
   });
+  let acc =
+    candidates.find((a) => String(a.code) === '4300') ||
+    candidates.find((a) => /sales\s*return/i.test(a.name || '')) ||
+    candidates.find((a) => /allowance/i.test(a.name || '')) ||
+    null;
+
   if (!acc) {
     acc = await tx.chartOfAccount.create({
       data: {
-        code: '4100',
+        code: '4300',
         name: 'Sales Returns & Allowances',
         type: 'Revenue',
         parentAccount: 'Operating Revenue',
         openingBalance: 0,
         currentBalance: 0,
-        balanceType: 'Credit',
+        balanceType: 'Debit',
         description: 'Contra revenue for returns',
         isActive: true,
         createdBy: userId,
@@ -80,9 +97,19 @@ async function computeItemsCOGS(tx, items) {
         item.product ||
         (await tx.product.findUnique({
           where: { id: item.productId },
-          select: { costPrice: true },
+          select: {
+            costPrice: true,
+            averageCost: true,
+            lastPurchasePrice: true,
+            standardCost: true,
+          },
         }));
-      cost = Number(product?.costPrice) || 0;
+      cost =
+        Number(product?.averageCost) ||
+        Number(product?.costPrice) ||
+        Number(product?.lastPurchasePrice) ||
+        Number(product?.standardCost) ||
+        0;
     }
     const qty = Number(item.quantity ?? item.returnQuantity) || 0;
     total += cost * qty;

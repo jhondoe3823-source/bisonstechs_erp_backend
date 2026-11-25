@@ -6,51 +6,52 @@ const Order = require('../warehouse/models/Order');
 const { fiscalYearGuard } = require('../middleware/fiscalYearMiddleware');
 const { resolveFiscalYearId } = require('../utils/fiscalYearHelper');
 const BalanceCalculator = require('../utils/balanceCalculator');
+const { getOrCreateArAccount } = require('../utils/arAccountHelper');
 const {
   computeItemsCOGS,
   findOrCreateCOGSAccount,
 } = require('../warehouse/services/salesAccountingService');
 const { findOrCreateInventoryAccount } = require('../warehouse/services/stockAccountingService');
 // ============================================================
-// ACCOUNTING CONSTANTS
+// ACCOUNTING CONSTANTS (aligned with defaultChartOfAccountsService)
 // ============================================================
 const REASON_TYPE_MAPPING = {
   'Return': {
-    accountCode: '4100',
+    accountCode: '4300',
     accountName: 'Sales Returns & Allowances',
-    accountType: 'ContraRevenue',
+    accountType: 'Revenue',
     parentAccount: 'Revenue',
     balanceType: 'Debit',
     description: 'Return of goods by customer'
   },
   'Refund': {
-    accountCode: '4105',
-    accountName: 'Sales Refunds',
-    accountType: 'ContraRevenue',
+    accountCode: '4300',
+    accountName: 'Sales Returns & Allowances',
+    accountType: 'Revenue',
     parentAccount: 'Revenue',
     balanceType: 'Debit',
     description: 'Cash refund to customer'
   },
   'Discount': {
-    accountCode: '4110',
-    accountName: 'Sales Discounts Allowed',
-    accountType: 'ContraRevenue',
+    accountCode: '4400',
+    accountName: 'Sales Discounts',
+    accountType: 'Revenue',
     parentAccount: 'Revenue',
     balanceType: 'Debit',
     description: 'Discount allowed to customer'
   },
   'Price Adjustment': {
-    accountCode: '4115',
-    accountName: 'Sales Adjustments',
-    accountType: 'ContraRevenue',
+    accountCode: '4300',
+    accountName: 'Sales Returns & Allowances',
+    accountType: 'Revenue',
     parentAccount: 'Revenue',
     balanceType: 'Debit',
     description: 'Price adjustment on invoice'
   },
   'Damaged Goods': {
-    accountCode: '4120',
+    accountCode: '4300',
     accountName: 'Sales Returns & Allowances',
-    accountType: 'ContraRevenue',
+    accountType: 'Revenue',
     parentAccount: 'Revenue',
     balanceType: 'Debit',
     description: 'Damaged goods returned'
@@ -63,39 +64,54 @@ const REASON_TYPE_MAPPING = {
 
 async function getOrCreateContraRevenueAccount(userId, companyId, reasonType) {
   const mapping = REASON_TYPE_MAPPING[reasonType] || REASON_TYPE_MAPPING['Return'];
-  
+
+  // Prefer the seeded returns/discount account by name, then by code.
+  // Never grab Service Revenue (4100) just because an old mapping used that code.
   let account = await prisma.chartOfAccount.findFirst({
     where: {
-      code: mapping.accountCode,
-      
-      companyId: companyId
-    }
+      companyId,
+      isActive: true,
+      name: { equals: mapping.accountName, mode: 'insensitive' },
+    },
   });
 
   if (!account) {
-    const existingCode = await prisma.chartOfAccount.findFirst({
-      where: { code: mapping.accountCode }
+    account = await prisma.chartOfAccount.findFirst({
+      where: {
+        companyId,
+        isActive: true,
+        code: mapping.accountCode,
+        name: { contains: mapping.accountName.split(' ')[0], mode: 'insensitive' },
+      },
     });
-    
-    let newCode = mapping.accountCode;
-    if (existingCode) {
-      let counter = 1;
-      let codeExists = true;
-      while (codeExists) {
-        newCode = `${mapping.accountCode.substring(0, 2)}${counter}${mapping.accountCode.substring(2)}`;
-        const existing = await prisma.chartOfAccount.findFirst({
-          where: { code: newCode,  companyId: companyId }
-        });
-        if (!existing) {
-          codeExists = false;
-        }
-        counter++;
-      }
-    }
+  }
 
+  if (!account) {
+    account = await prisma.chartOfAccount.findFirst({
+      where: {
+        companyId,
+        isActive: true,
+        OR: [
+          { name: { contains: 'Sales Return', mode: 'insensitive' } },
+          { name: { contains: 'Allowances', mode: 'insensitive' } },
+          { code: '4300' },
+        ],
+      },
+      orderBy: { code: 'asc' },
+    });
+    // Reject Service Revenue / other revenue if name doesn't look like returns/discounts
+    if (
+      account &&
+      !/return|allowance|discount|refund|adjustment/i.test(account.name || '')
+    ) {
+      account = null;
+    }
+  }
+
+  if (!account) {
     account = await prisma.chartOfAccount.create({
       data: {
-        code: newCode,
+        code: mapping.accountCode,
         name: mapping.accountName,
         type: mapping.accountType,
         parentAccount: mapping.parentAccount,
@@ -106,106 +122,52 @@ async function getOrCreateContraRevenueAccount(userId, companyId, reasonType) {
         balanceType: mapping.balanceType,
         isActive: true,
         createdBy: userId,
-        companyId: companyId
-      }
+        companyId: companyId,
+      },
     });
   }
   return account;
 }
 
 async function getOrCreateReceivableAccount(userId, companyId) {
-  let arAccount = await prisma.chartOfAccount.findFirst({
-    where: {
-      code: '1110',
-      companyId: companyId
-    }
-  });
-
-  if (!arAccount) {
-    const existingCode = await prisma.chartOfAccount.findFirst({
-      where: { code: '1110' }
-    });
-    
-    let newCode = '1110';
-    if (existingCode) {
-      let counter = 1;
-      let codeExists = true;
-      while (codeExists) {
-        newCode = `111${counter}`;
-        const existing = await prisma.chartOfAccount.findFirst({
-          where: { code: newCode, companyId: companyId }
-        });
-        if (!existing) {
-          codeExists = false;
-        }
-        counter++;
-      }
-    }
-
-    arAccount = await prisma.chartOfAccount.create({
-      data: {
-        code: newCode,
-        name: 'Accounts Receivable',
-        type: 'Assets',
-        parentAccount: 'Current Assets',
-        openingBalance: 0,
-        currentBalance: 0,
-        description: 'Amount due from customers',
-        taxCode: 'N/A',
-        balanceType: 'Debit',
-        isActive: true,
-        createdBy: userId,
-        companyId: companyId
-      }
-    });
-  }
-  return arAccount;
+  return getOrCreateArAccount(userId, companyId);
 }
 
 async function getOrCreateTaxPayableAccount(userId, companyId) {
   let taxAccount = await prisma.chartOfAccount.findFirst({
     where: {
-      code: '2200',
-      companyId: companyId
-    }
+      companyId,
+      isActive: true,
+      OR: [
+        { code: '2100' },
+        { name: { equals: 'Taxes Payable', mode: 'insensitive' } },
+        { name: { contains: 'GST Payable', mode: 'insensitive' } },
+        { name: { contains: 'Sales Tax Payable', mode: 'insensitive' } },
+      ],
+    },
+    orderBy: { code: 'asc' },
   });
 
-  if (!taxAccount) {
-    const existingCode = await prisma.chartOfAccount.findFirst({
-      where: { code: '2200' }
-    });
-    
-    let newCode = '2200';
-    if (existingCode) {
-      let counter = 1;
-      let codeExists = true;
-      while (codeExists) {
-        newCode = `22${counter}0`;
-        const existing = await prisma.chartOfAccount.findFirst({
-          where: { code: newCode, companyId: companyId }
-        });
-        if (!existing) {
-          codeExists = false;
-        }
-        counter++;
-      }
-    }
+  if (taxAccount && /salaries/i.test(taxAccount.name || '')) {
+    taxAccount = null;
+  }
 
+  if (!taxAccount) {
     taxAccount = await prisma.chartOfAccount.create({
       data: {
-        code: newCode,
-        name: 'Sales Tax Payable',
-        type: 'Liabilities',
+        code: '2100',
+        name: 'Taxes Payable',
+        type: 'Liability',
         parentAccount: 'Current Liabilities',
         openingBalance: 0,
         currentBalance: 0,
-        description: 'Sales tax collected from customers',
+        description: 'Sales tax / GST collected from customers',
         taxCode: 'N/A',
         balanceType: 'Credit',
         isActive: true,
         createdBy: userId,
-        companyId: companyId
-      }
+        companyId: companyId,
+      },
     });
   }
   return taxAccount;
@@ -370,7 +332,7 @@ async function getOrCreateCustomerCreditAccount(userId, companyId) {
       data: {
         code: '2130',
         name: 'Customer Credit Balance',
-        type: 'Liabilities',
+        type: 'Liability',
         parentAccount: 'Current Liabilities',
         openingBalance: 0,
         currentBalance: 0,

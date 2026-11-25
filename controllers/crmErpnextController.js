@@ -157,6 +157,20 @@ const seedErpnextMasters = async (req, res) => {
         create: { id: randomUUID(), companyId: cid, name, updatedAt: new Date() },
       });
     }
+    for (const name of ['All Customer Groups']) {
+      await prisma.crmCustomerGroup.upsert({
+        where: { companyId_name: { companyId: cid, name } },
+        update: {},
+        create: { id: randomUUID(), companyId: cid, name, updatedAt: new Date() },
+      });
+    }
+    for (const name of ['SAP Business One', 'Oracle NetSuite', 'Odoo ERP', 'QuickBooks Online', 'Zoho CRM', 'Salesforce']) {
+      await prisma.crmCompetitor.upsert({
+        where: { companyId_name: { companyId: cid, name } },
+        update: {},
+        create: { id: randomUUID(), companyId: cid, name, isActive: true, updatedAt: new Date() },
+      });
+    }
     const leadSourceNames = [
       'Walk In', 'Cold Calling', 'Advertisement', 'Exhibition',
       'Supplier Reference', 'Mass Mailing', "Customer's Referral",

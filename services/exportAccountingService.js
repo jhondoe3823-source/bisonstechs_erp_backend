@@ -133,12 +133,12 @@ async function getCustomerAdvancesAccount(tx, companyId, userId) {
   return findOrCreateAccount(tx, {
     companyId,
     userId,
-    code: '2200',
+    code: '2140',
     name: 'Customer Advances',
     type: 'Liability',
     parentAccount: 'Current Liabilities',
     balanceType: 'Credit',
-    keywords: ['Advance', 'Advances', 'Customer Advance'],
+    keywords: ['Customer Advance', 'Customer Advances', 'Unearned Revenue'],
   });
 }
 
@@ -146,7 +146,7 @@ async function getFxGainAccount(tx, companyId, userId) {
   return findOrCreateAccount(tx, {
     companyId,
     userId,
-    code: '7100',
+    code: '4201',
     name: 'Foreign Exchange Gain',
     type: 'Revenue',
     parentAccount: 'Other Income',
@@ -159,7 +159,7 @@ async function getFxLossAccount(tx, companyId, userId) {
   return findOrCreateAccount(tx, {
     companyId,
     userId,
-    code: '7200',
+    code: '6960',
     name: 'Foreign Exchange Loss',
     type: 'Expense',
     parentAccount: 'Other Expenses',

@@ -316,7 +316,16 @@ class SalesPaymentReceivedModel {
       }
 
       // ─── Allocate series number after validation / idempotency ─
-      const paymentNumber = await allocateNextNumber(companyId, 'sale-payment', { tx });
+      // payment_number is globally unique across tenants; skip collisions.
+      let paymentNumber = await allocateNextNumber(companyId, 'sale-payment', { tx });
+      for (let attempt = 0; attempt < 25; attempt++) {
+        const clash = await tx.salesPaymentReceived.findFirst({
+          where: { paymentNumber },
+          select: { id: true },
+        });
+        if (!clash) break;
+        paymentNumber = await allocateNextNumber(companyId, 'sale-payment', { tx });
+      }
 
       // ─── Create Journal Entry (idempotent reference when keyed) ─
       const entryNumber = `JE-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
@@ -413,12 +422,12 @@ class SalesPaymentReceivedModel {
           companyId: companyId,
           fiscalYearId: data.fiscalYearId,
           invoicePayments: {
-            create: invoicePayments.map(inv => ({
-              invoiceId: inv.invoiceId,
-              invoiceNumber: inv.invoiceNumber,
-              amountPaid: inv.amountPaid
-            }))
-          }
+            create: validatedInvoices.map((inv) => ({
+              invoiceId: inv.invoice.id,
+              invoiceNumber: inv.invoice.invoiceNumber,
+              amountPaid: inv.amountPaid,
+            })),
+          },
         },
         include: {
           invoicePayments: {

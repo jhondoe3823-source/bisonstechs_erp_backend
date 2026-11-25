@@ -492,17 +492,29 @@ class LoanModel {
       throw new Error('Loan is already fully paid');
     }
 
-    if (data.amount > loan.outstandingBalance) {
-      throw new Error(`Payment amount (${data.amount}) exceeds outstanding balance (${loan.outstandingBalance})`);
+    const paymentAmount = Number(data.amount) || 0;
+    if (paymentAmount <= 0) {
+      throw new Error('Payment amount must be greater than 0');
+    }
+    if (paymentAmount > loan.outstandingBalance) {
+      throw new Error(`Payment amount (${paymentAmount}) exceeds outstanding principal (${loan.outstandingBalance})`);
     }
 
-    // Calculate interest portion
-    const monthlyRate = loan.interestRate / 100 / 12;
-    const interestPortion = loan.outstandingBalance * monthlyRate;
-    const principalPortion = data.amount - interestPortion;
+    // EMI: accrue simple monthly interest on outstanding principal, then split.
+    // Prepayment: entire amount reduces principal (no interest portion in this posting).
+    // Principal never goes negative; outstanding reduces by principal only.
+    const isPrepayment = String(data.type || '').toLowerCase() === 'prepayment';
+    let interestPortion = 0;
+    let principalPortion = paymentAmount;
+    if (!isPrepayment) {
+      const monthlyRate = Number(loan.interestRate || 0) / 100 / 12;
+      const accruedInterest = Math.max(0, loan.outstandingBalance * monthlyRate);
+      interestPortion = Math.min(accruedInterest, paymentAmount);
+      principalPortion = Math.max(0, paymentAmount - interestPortion);
+    }
 
-    const newTotalPaid = loan.totalPaid + data.amount;
-    const newOutstandingBalance = loan.loanAmount - newTotalPaid;
+    const newTotalPaid = (Number(loan.totalPaid) || 0) + paymentAmount;
+    const newOutstandingBalance = Math.max(0, loan.outstandingBalance - principalPortion);
 
     // Calculate next payment date
     const nextPaymentDate = new Date(data.paymentDate);
@@ -533,7 +545,7 @@ class LoanModel {
       data: {
         loanId: loanId,
         date: data.paymentDate,
-        amount: data.amount,
+        amount: paymentAmount,
         type: data.type || 'EMI',
         status: 'Paid',
         reference: data.reference || '',

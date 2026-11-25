@@ -35,19 +35,31 @@ async function getOrCreateExpenseAccount(userId, companyId, tx) {
   const db = tx || prisma;
   console.log('🔍 [AP] Getting/Creating Expense account');
 
-  let expenseAccount = await db.chartOfAccount.findFirst({
+  // Prefer seeded 6900 — never use 5000/5001 (those are COGS)
+  const candidates = await db.chartOfAccount.findMany({
     where: {
-      code: '5000',
-      companyId: companyId
-    }
+      companyId,
+      isActive: true,
+      OR: [
+        { code: '6900' },
+        { name: { equals: 'Miscellaneous Expense', mode: 'insensitive' } },
+        { name: { contains: 'Other Expense', mode: 'insensitive' } },
+      ],
+    },
+    orderBy: { code: 'asc' },
   });
+
+  let expenseAccount =
+    candidates.find((a) => String(a.code) === '6900') ||
+    candidates.find((a) => /miscellaneous|other expense/i.test(a.name || '')) ||
+    null;
 
   if (!expenseAccount) {
     console.log('📝 [AP] Creating new Expense account');
     expenseAccount = await db.chartOfAccount.create({
       data: {
-        code: '5000',
-        name: 'Expense Account',
+        code: '6900',
+        name: 'Miscellaneous Expense',
         type: 'Expense',
         parentAccount: 'Operating Expenses',
         openingBalance: 0,
@@ -57,8 +69,8 @@ async function getOrCreateExpenseAccount(userId, companyId, tx) {
         balanceType: 'Debit',
         isActive: true,
         createdBy: userId,
-        companyId: companyId
-      }
+        companyId: companyId,
+      },
     });
     console.log('✅ [AP] Expense account created:', expenseAccount.id);
   } else {
@@ -292,12 +304,20 @@ function computeOpenPayablesSummary(openPayables) {
 }
 
 async function fetchCompanyPurchaseInvoices(companyId, extraWhere = {}, locationId = null) {
+  // Include Draft opening-balance bills so AP aging can reconcile with GL
+  // without double-posting. Operational drafts stay out unless marked OPENING-BALANCE.
   return prisma.purchaseInvoice.findMany({
     where: {
       companyId,
       isActive: true,
       isDeleted: false,
-      invoiceStatus: { notIn: ['Draft', 'Cancelled'] },
+      OR: [
+        { invoiceStatus: { notIn: ['Draft', 'Cancelled'] } },
+        {
+          invoiceStatus: 'Draft',
+          notes: { contains: 'OPENING-BALANCE' },
+        },
+      ],
       ...purchaseInvoiceLocationWhere(locationId),
       ...extraWhere
     },

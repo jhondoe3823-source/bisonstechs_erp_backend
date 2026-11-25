@@ -61,7 +61,7 @@ test('account resolution', async (t) => {
       { companyId: COMPANY_ID, code: '2200', name: 'Salaries Payable', type: 'Liability', isActive: true },
     ]);
     const account = await accounting.getCustomerAdvancesAccount(tx, COMPANY_ID, USER_ID);
-    assert.equal(account.code, '2201');
+    assert.equal(account.code, '2140');
     assert.equal(account.name, 'Customer Advances');
     assert.equal(tx.rows.find((row) => row.code === '2200').name, 'Salaries Payable');
   });
@@ -74,6 +74,7 @@ test('account resolution', async (t) => {
     const gain = await accounting.getFxGainAccount(tx, COMPANY_ID, USER_ID);
     const loss = await accounting.getFxLossAccount(tx, COMPANY_ID, USER_ID);
     assert.equal(gain.code, '4201');
+    // Existing named FX loss is reused even if legacy code differs from canonical 6960
     assert.equal(loss.code, '7100');
     assert.equal(tx.rows.length, 2);
   });
@@ -93,11 +94,11 @@ test('account resolution', async (t) => {
 
   await t.test('skips inactive accounts and reuses the created account afterwards', async () => {
     const tx = fakeChart([
-      { companyId: COMPANY_ID, code: '2200', name: 'Customer Advances', type: 'Liability', isActive: false },
+      { companyId: COMPANY_ID, code: '2140', name: 'Customer Advances', type: 'Liability', isActive: false },
     ]);
     const first = await accounting.getCustomerAdvancesAccount(tx, COMPANY_ID, USER_ID);
     const second = await accounting.getCustomerAdvancesAccount(tx, COMPANY_ID, USER_ID);
-    assert.equal(first.code, '2201');
+    assert.equal(first.code, '2141');
     assert.equal(second.id, first.id);
     assert.equal(tx.rows.filter((row) => row.name === 'Customer Advances').length, 2);
   });

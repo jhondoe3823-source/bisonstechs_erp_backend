@@ -19,12 +19,38 @@ const BACKEND_TYPE_MAP = {
   Expenses: 'Expense'
 };
 
+function isOpeningBalanceJournal(entry) {
+  if (!entry) return false;
+  if (String(entry.type || '') === 'OpeningBalance') return true;
+
+  const desc = String(entry.description || '').toLowerCase();
+  const ref = String(entry.reference || '').toLowerCase();
+
+  if (
+    desc.includes('opening balance') ||
+    desc.includes('opening stock') ||
+    desc.includes('stock in (opening')
+  ) {
+    return true;
+  }
+
+  if (
+    ref.startsWith('system-ob') ||
+    ref.startsWith('ob-stock') ||
+    ref.startsWith('ob-bank') ||
+    ref.includes('opening')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function hasOpeningBalanceJournalEntry(allEntries, accountId) {
   return allEntries.some(
     (entry) =>
-      entry.description &&
-      entry.description.toLowerCase().includes('opening balance') &&
-      entry.lines.some((line) => line.accountId === accountId)
+      isOpeningBalanceJournal(entry) &&
+      (entry.lines || []).some((line) => line.accountId === accountId)
   );
 }
 

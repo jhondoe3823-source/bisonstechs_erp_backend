@@ -862,6 +862,8 @@ class SalesInvoiceModel {
         billingAddress, shippingAddress, items, dueDate,
         paymentTerms, notes, userId, createdBy, fiscalYearId, companyId,
         locationId,
+        invoiceDate: invoiceDateInput,
+        isOpeningBalance,
         isInstallmentSale,
         downPaymentAmount,
         installmentCount,
@@ -910,10 +912,13 @@ class SalesInvoiceModel {
       }
 
       const invoiceNumber = await nextSalesInvoiceNumber(companyId, tx);
-      const invoiceDate = new Date();
+      const invoiceDate = invoiceDateInput ? new Date(invoiceDateInput) : new Date();
+      if (Number.isNaN(invoiceDate.getTime())) {
+        throw new Error('Invalid invoiceDate');
+      }
       const dueDateObj = dueDate
         ? new Date(dueDate)
-        : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        : new Date(invoiceDate.getTime() + 30 * 24 * 60 * 60 * 1000);
 
       let subtotal = 0, totalDiscount = 0, totalTax = 0;
 
@@ -986,8 +991,14 @@ class SalesInvoiceModel {
           outstanding: grandTotal,
           invoiceStatus: 'Draft',
           paymentStatus: 'Unpaid',
-          notes: notes || null,
-          salesRevenueAccountId: revenueAccount?.id || null,
+          notes: (() => {
+            const base = String(notes || '').trim();
+            if (!isOpeningBalance) return base || null;
+            return base.includes('OPENING-BALANCE')
+              ? base
+              : [base, 'OPENING-BALANCE'].filter(Boolean).join(' ').trim();
+          })(),
+          salesRevenueAccountId: isOpeningBalance ? null : (revenueAccount?.id || null),
           arAccountId: arAccount?.id || null,
           createdBy: createdBy || userId,   // ✅ Use createdBy
           companyId: companyId,             // ✅ Use companyId
@@ -1061,6 +1072,7 @@ class SalesInvoiceModel {
       }
 
       const companyId = invoice.companyId;
+      const isOpeningBalance = String(invoice.notes || '').includes('OPENING-BALANCE');
       const linkedArIsInventory =
         invoice.arAccount &&
         (String(invoice.arAccount.code) === '1200' ||
@@ -1069,13 +1081,50 @@ class SalesInvoiceModel {
       const arAccount = (!invoice.arAccountId || linkedArIsInventory)
         ? await findARAccount(tx, companyId, userId)
         : invoice.arAccount;
-      const revenueAccount = invoice.salesRevenueAccountId
-        ? invoice.salesRevenueAccount
-        : await findRevenueAccount(tx, companyId, userId);
 
-      if (!arAccount || !revenueAccount) {
+      // Opening receivables credit Opening Balance Equity (not Sales Revenue)
+      // and must not drive COGS / stock-out.
+      let creditAccount = null;
+      if (isOpeningBalance) {
+        creditAccount = await tx.chartOfAccount.findFirst({
+          where: {
+            companyId,
+            isActive: true,
+            OR: [
+              { code: '3010' },
+              { name: { equals: 'Opening Balance Equity', mode: 'insensitive' } },
+            ],
+          },
+        });
+        if (!creditAccount) {
+          creditAccount = await tx.chartOfAccount.create({
+            data: {
+              code: '3010',
+              name: 'Opening Balance Equity',
+              type: 'Equity',
+              parentAccount: 'Equity',
+              openingBalance: 0,
+              currentBalance: 0,
+              balanceType: 'Credit',
+              description: 'Opening balance equity account - DO NOT DELETE',
+              taxCode: 'N/A',
+              isActive: true,
+              createdBy: userId,
+              companyId,
+            },
+          });
+        }
+      } else {
+        creditAccount = invoice.salesRevenueAccountId
+          ? invoice.salesRevenueAccount
+          : await findRevenueAccount(tx, companyId, userId);
+      }
+
+      if (!arAccount || !creditAccount) {
         throw new Error(
-          'Accounts Receivable or Sales Revenue account not found in Chart of Accounts.'
+          isOpeningBalance
+            ? 'Accounts Receivable or Opening Balance Equity account not found in Chart of Accounts.'
+            : 'Accounts Receivable or Sales Revenue account not found in Chart of Accounts.'
         );
       }
 
@@ -1083,42 +1132,102 @@ class SalesInvoiceModel {
         where: { id: invoiceId },
         data: {
           arAccountId: arAccount.id,
-          salesRevenueAccountId: revenueAccount.id
+          ...(isOpeningBalance ? {} : { salesRevenueAccountId: creditAccount.id }),
         }
       });
 
       const entryNumber = `JE-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
+      const taxAmount = Math.max(0, Number(invoice.taxTotal) || 0);
+      const netRevenue = Math.max(
+        0,
+        Number(invoice.grandTotal || 0) - taxAmount
+      );
+
+      const linesCreate = [
+        {
+          accountId: arAccount.id,
+          accountName: arAccount.name,
+          accountCode: arAccount.code,
+          debit: invoice.grandTotal,
+          credit: 0,
+        },
+      ];
+
+      if (isOpeningBalance || taxAmount <= 0) {
+        linesCreate.push({
+          accountId: creditAccount.id,
+          accountName: creditAccount.name,
+          accountCode: creditAccount.code,
+          debit: 0,
+          credit: invoice.grandTotal,
+        });
+      } else {
+        // Split GST out of revenue into Taxes Payable (2100).
+        let taxAccount = await tx.chartOfAccount.findFirst({
+          where: {
+            companyId,
+            isActive: true,
+            OR: [
+              { code: '2100' },
+              { name: { equals: 'Taxes Payable', mode: 'insensitive' } },
+              { name: { contains: 'GST Payable', mode: 'insensitive' } },
+            ],
+          },
+        });
+        if (!taxAccount) {
+          taxAccount = await tx.chartOfAccount.create({
+            data: {
+              code: '2100',
+              name: 'Taxes Payable',
+              type: 'Liability',
+              parentAccount: 'Current Liabilities',
+              openingBalance: 0,
+              currentBalance: 0,
+              balanceType: 'Credit',
+              description: 'Output tax / GST payable',
+              taxCode: 'N/A',
+              isActive: true,
+              createdBy: userId,
+              companyId,
+            },
+          });
+        }
+
+        linesCreate.push({
+          accountId: creditAccount.id,
+          accountName: creditAccount.name,
+          accountCode: creditAccount.code,
+          debit: 0,
+          credit: netRevenue,
+        });
+        if (taxAmount > 0) {
+          linesCreate.push({
+            accountId: taxAccount.id,
+            accountName: taxAccount.name,
+            accountCode: taxAccount.code,
+            debit: 0,
+            credit: taxAmount,
+          });
+        }
+      }
+
       const journalEntry = await tx.journalEntry.create({
         data: {
           entryNumber,
           date: invoice.invoiceDate || new Date(),
-          description: `Sales Invoice #${invoice.invoiceNumber} for ${invoice.customerName}`,
+          description: isOpeningBalance
+            ? `Opening Balance Invoice #${invoice.invoiceNumber} for ${invoice.customerName}`
+            : `Sales Invoice #${invoice.invoiceNumber} for ${invoice.customerName}`,
           reference: invoice.invoiceNumber,
           status: 'Posted',
+          type: isOpeningBalance ? 'OpeningBalance' : undefined,
           createdBy: userId,
           postedBy: userId,
           postedAt: new Date(),
           companyId: companyId,
           fiscalYearId: invoice.fiscalYearId,
-          lines: {
-            create: [
-              {
-                accountId: arAccount.id,
-                accountName: arAccount.name,
-                accountCode: arAccount.code,
-                debit: invoice.grandTotal,
-                credit: 0
-              },
-              {
-                accountId: revenueAccount.id,
-                accountName: revenueAccount.name,
-                accountCode: revenueAccount.code,
-                debit: 0,
-                credit: invoice.grandTotal
-              }
-            ]
-          }
+          lines: { create: linesCreate },
         },
         include: { lines: true }
       });
@@ -1159,20 +1268,22 @@ class SalesInvoiceModel {
         });
       }
 
-      const invoiceWithItems = await tx.salesInvoice.findUnique({
-        where: { id: invoiceId },
-        include: { items: { include: { product: true } } },
-      });
-      if (invoiceWithItems) {
-        await postSalesInvoiceCOGS(tx, {
-          invoice: invoiceWithItems,
-          userId,
-          companyId,
+      if (!isOpeningBalance) {
+        const invoiceWithItems = await tx.salesInvoice.findUnique({
+          where: { id: invoiceId },
+          include: { items: { include: { product: true } } },
         });
-        await applySalesInvoiceStockOut(tx, {
-          invoice: invoiceWithItems,
-          userId,
-        });
+        if (invoiceWithItems) {
+          await postSalesInvoiceCOGS(tx, {
+            invoice: invoiceWithItems,
+            userId,
+            companyId,
+          });
+          await applySalesInvoiceStockOut(tx, {
+            invoice: invoiceWithItems,
+            userId,
+          });
+        }
       }
 
       const updatedInvoice = await tx.salesInvoice.update({
@@ -1182,7 +1293,9 @@ class SalesInvoiceModel {
           postedAt: invoice.postedAt || new Date(),
           journalEntryId: journalEntry.id,
           arAccountId: arAccount.id,
-          salesRevenueAccountId: revenueAccount.id,
+          ...(isOpeningBalance
+            ? {}
+            : { salesRevenueAccountId: creditAccount.id }),
           updatedBy: userId
         },
         include: {
@@ -1667,15 +1780,18 @@ class SalesInvoiceModel {
 
   static async backfillMissingJournals(companyId, userId) {
     if (!companyId || !userId) return;
+    // Only backfill invoices that were intentionally posted/paid but are missing
+    // a journal. Never auto-post Draft invoices or OPENING-BALANCE migration drafts.
     const missing = await prisma.salesInvoice.findMany({
       where: {
         companyId,
         isActive: true,
         isDeleted: false,
         journalEntryId: null,
-        invoiceStatus: { not: 'Cancelled' }
+        invoiceStatus: { in: ['Posted', 'Partially Paid', 'Paid'] },
+        NOT: { notes: { contains: 'OPENING-BALANCE' } },
       },
-      select: { id: true }
+      select: { id: true },
     });
     for (const inv of missing) {
       await this.postInvoice(inv.id, userId);

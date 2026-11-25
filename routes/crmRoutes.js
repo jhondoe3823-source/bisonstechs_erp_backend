@@ -9,7 +9,7 @@ const { requirePermission }  = require('../middleware/rbacMiddleware');
 
 // ─── Controllers ─────────────────────────────────────────────────────────────
 const {
-  getLeads, getLeadById, createLead, updateLead, deleteLead,
+  getLeads, getLeadFilterOptions, getLeadById, createLead, updateLead, deleteLead,
   bulkUpdateLeads, updateLeadBoardOrder, addLeadNote, convertLead,
   getDashboard, getCustomFields, createCustomField, updateCustomField, deleteCustomField, reorderCustomFields,
   getBoards, createBoard, getDefaultBoard,
@@ -64,6 +64,7 @@ router.get('/dashboard/enterprise', requirePermission('crm.dashboard.view'), get
 // ─── Leads ──────────────────────────────────────────────────────────────────
 router.get('/leads',                  requirePermission('crm.leads.view'),   getLeads);
 router.post('/leads',                 requirePermission('crm.leads.create'), createLead);
+router.get('/leads/filter-options',   requirePermission('crm.leads.view'),   getLeadFilterOptions);
 router.get('/leads/:id',              requirePermission('crm.leads.view'),   getLeadById);
 router.put('/leads/:id',              requirePermission('crm.leads.edit'),   updateLead);
 router.patch('/leads/:id',            requirePermission('crm.leads.edit'),   updateLead);

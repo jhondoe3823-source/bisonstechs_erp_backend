@@ -750,9 +750,17 @@ exports.recordDrawings = async (req, res) => {
         },
       });
 
+      // Debit-normal drawings (3300) increase on debit; credit-normal capital decreases on debit.
+      const isDebitNormal =
+        String(account.balanceType || '').toLowerCase() === 'debit' ||
+        /drawing/i.test(account.name || '');
       await tx.chartOfAccount.update({
         where: { id: account.id },
-        data: { currentBalance: { decrement: amount } },
+        data: {
+          currentBalance: isDebitNormal
+            ? { increment: amount }
+            : { decrement: amount },
+        },
       });
       await applyFundingBalance(fundingAccount, bankAccount, amount, 'out', tx);
 

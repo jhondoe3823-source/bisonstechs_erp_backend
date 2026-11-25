@@ -7,44 +7,36 @@ const { getOrCreateCashAccount } = require('../utils/cashAccountHelper');
 // HELPER FUNCTIONS
 // ============================================================
 
-// Helper: Get or create Loan Liability account
+// Helper: Get or create Loan Liability account (default COA 2300 — never 2100 Taxes Payable)
 async function getOrCreateLoanAccount(userId, companyId) {
   console.log('🔍 [LN] Getting/Creating Loan Liability account');
-  let loanAccount = await prisma.chartOfAccount.findFirst({
+  const candidates = await prisma.chartOfAccount.findMany({
     where: {
-      code: '2100',
-      companyId: companyId
-    }
+      companyId,
+      isActive: true,
+      OR: [
+        { code: '2300' },
+        { name: { equals: 'Loan Payable', mode: 'insensitive' } },
+        { name: { equals: 'Loans Payable', mode: 'insensitive' } },
+        { name: { contains: 'Loan Payable', mode: 'insensitive' } },
+      ],
+    },
+    orderBy: { code: 'asc' },
   });
+
+  let loanAccount =
+    candidates.find((a) => String(a.code) === '2300') ||
+    candidates.find((a) => /loans?\s*payable/i.test(a.name || '') && !/tax/i.test(a.name || '')) ||
+    null;
 
   if (!loanAccount) {
     console.log('📝 [LN] Creating new Loan Liability account');
-    const existingCode = await prisma.chartOfAccount.findFirst({
-      where: { code: '2100', companyId: companyId }
-    });
-    
-    let newCode = '2100';
-    if (existingCode) {
-      let counter = 1;
-      let codeExists = true;
-      while (codeExists) {
-        newCode = `21${counter}0`;
-        const existing = await prisma.chartOfAccount.findFirst({
-          where: { code: newCode, companyId: companyId }
-        });
-        if (!existing) {
-          codeExists = false;
-        }
-        counter++;
-      }
-    }
-
     loanAccount = await prisma.chartOfAccount.create({
       data: {
-        code: newCode,
-        name: 'Loans Payable',
-        type: 'Liabilities',
-        parentAccount: 'Long Term Liabilities',
+        code: '2300',
+        name: 'Loan Payable',
+        type: 'Liability',
+        parentAccount: 'Non-Current Liabilities',
         openingBalance: 0,
         currentBalance: 0,
         description: 'Loans and borrowings',
@@ -52,61 +44,57 @@ async function getOrCreateLoanAccount(userId, companyId) {
         balanceType: 'Credit',
         isActive: true,
         createdBy: userId,
-        companyId: companyId
-      }
+        companyId: companyId,
+      },
     });
     console.log('✅ [LN] Loan Liability account created');
   }
   return loanAccount;
 }
 
-// Helper: Get or create Interest Expense account
+// Helper: Get or create Interest Expense (6850 — never 6200 Utilities)
 async function getOrCreateInterestExpenseAccount(userId, companyId) {
   console.log('🔍 [LN] Getting/Creating Interest Expense account');
-  let interestAccount = await prisma.chartOfAccount.findFirst({
+  const candidates = await prisma.chartOfAccount.findMany({
     where: {
-      code: '6200',
-      companyId: companyId
-    }
+      companyId,
+      isActive: true,
+      OR: [
+        { code: '6850' },
+        { name: { equals: 'Interest Expense', mode: 'insensitive' } },
+        { name: { contains: 'Interest Expense', mode: 'insensitive' } },
+      ],
+    },
+    orderBy: { code: 'asc' },
   });
+
+  let interestAccount =
+    candidates.find((a) => /interest\s*expense/i.test(a.name || '')) ||
+    candidates.find((a) => String(a.code) === '6850') ||
+    null;
+
+  // Reject utilities / unrelated expense if somehow matched by code alone
+  if (interestAccount && /utilit/i.test(interestAccount.name || '')) {
+    interestAccount = null;
+  }
 
   if (!interestAccount) {
     console.log('📝 [LN] Creating new Interest Expense account');
-    const existingCode = await prisma.chartOfAccount.findFirst({
-      where: { code: '6200', companyId: companyId }
-    });
-    
-    let newCode = '6200';
-    if (existingCode) {
-      let counter = 1;
-      let codeExists = true;
-      while (codeExists) {
-        newCode = `62${counter}0`;
-        const existing = await prisma.chartOfAccount.findFirst({
-          where: { code: newCode, companyId: companyId }
-        });
-        if (!existing) {
-          codeExists = false;
-        }
-        counter++;
-      }
-    }
-
     interestAccount = await prisma.chartOfAccount.create({
       data: {
-        code: newCode,
+        code: '6850',
         name: 'Interest Expense',
-        type: 'Expenses',
-        parentAccount: 'Financial Expenses',
+        type: 'Expense',
+        parentAccount: 'Finance Costs',
         openingBalance: 0,
         currentBalance: 0,
-        description: 'Interest on loans',
+        description: 'Interest on loans and borrowings',
         taxCode: 'N/A',
         balanceType: 'Debit',
         isActive: true,
         createdBy: userId,
-        companyId: companyId
-      }
+        companyId: companyId,
+      },
     });
     console.log('✅ [LN] Interest Expense account created');
   }
@@ -664,6 +652,36 @@ exports.recordPayment = async (req, res) => {
       loan.bankAccountId,
     );
 
+    const paymentLines = [];
+    if (result.principal > 0) {
+      paymentLines.push({
+        accountId: loanAccount.id,
+        accountName: loanAccount.name,
+        accountCode: loanAccount.code,
+        debit: result.principal,
+        credit: 0,
+        isReconciled: false,
+      });
+    }
+    if (result.interest > 0) {
+      paymentLines.push({
+        accountId: interestAccount.id,
+        accountName: interestAccount.name,
+        accountCode: interestAccount.code,
+        debit: result.interest,
+        credit: 0,
+        isReconciled: false,
+      });
+    }
+    paymentLines.push({
+      accountId: cashChartAccount.id,
+      accountName: cashChartAccount.name,
+      accountCode: cashChartAccount.code,
+      debit: 0,
+      credit: paymentAmount,
+      isReconciled: false,
+    });
+
     await prisma.journalEntry.create({
       data: {
         entryNumber: `JE-${Date.now()}`,
@@ -676,34 +694,9 @@ exports.recordPayment = async (req, res) => {
         postedAt: new Date(),
         companyId: companyId,
         lines: {
-          create: [
-            {
-              accountId: loanAccount.id,
-              accountName: loanAccount.name,
-              accountCode: loanAccount.code,
-              debit: result.principal,
-              credit: 0,
-              isReconciled: false
-            },
-            {
-              accountId: interestAccount.id,
-              accountName: interestAccount.name,
-              accountCode: interestAccount.code,
-              debit: result.interest,
-              credit: 0,
-              isReconciled: false
-            },
-            {
-              accountId: cashChartAccount.id,
-              accountName: cashChartAccount.name,
-              accountCode: cashChartAccount.code,
-              debit: 0,
-              credit: paymentAmount,
-              isReconciled: false
-            }
-          ]
-        }
-      }
+          create: paymentLines,
+        },
+      },
     });
 
     await syncCashMovement({

@@ -8,43 +8,28 @@ const { getOrCreateApAccount } = require('../utils/apAccountHelper');
 // HELPER FUNCTIONS
 // ============================================================
 
-// Helper: Get or create Fixed Asset account
+// Helper: Get or create Fixed Asset account (default COA 1500)
 async function getOrCreateFixedAssetAccount(userId, companyId) {
   console.log('🔍 [FA] Getting/Creating Fixed Asset account');
   let assetAccount = await prisma.chartOfAccount.findFirst({
     where: {
-      code: '1500',
-      companyId: companyId
-    }
+      companyId,
+      isActive: true,
+      OR: [
+        { code: '1500' },
+        { name: { equals: 'Fixed Assets', mode: 'insensitive' } },
+      ],
+    },
+    orderBy: { code: 'asc' },
   });
 
   if (!assetAccount) {
     console.log('📝 [FA] Creating new Fixed Asset account');
-    const existingCode = await prisma.chartOfAccount.findFirst({
-      where: { code: '1500', companyId: companyId }
-    });
-    
-    let newCode = '1500';
-    if (existingCode) {
-      let counter = 1;
-      let codeExists = true;
-      while (codeExists) {
-        newCode = `15${counter}0`;
-        const existing = await prisma.chartOfAccount.findFirst({
-          where: { code: newCode, companyId: companyId }
-        });
-        if (!existing) {
-          codeExists = false;
-        }
-        counter++;
-      }
-    }
-
     assetAccount = await prisma.chartOfAccount.create({
       data: {
-        code: newCode,
+        code: '1500',
         name: 'Fixed Assets',
-        type: 'Assets',
+        type: 'Asset',
         parentAccount: 'Non-Current Assets',
         openingBalance: 0,
         currentBalance: 0,
@@ -53,51 +38,36 @@ async function getOrCreateFixedAssetAccount(userId, companyId) {
         balanceType: 'Debit',
         isActive: true,
         createdBy: userId,
-        companyId: companyId
-      }
+        companyId: companyId,
+      },
     });
     console.log('✅ [FA] Fixed Asset account created');
   }
   return assetAccount;
 }
 
-// Helper: Get or create Accumulated Depreciation account
+// Helper: Get or create Accumulated Depreciation account (default COA 1510)
 async function getOrCreateAccumulatedDepreciationAccount(userId, companyId) {
   console.log('🔍 [FA] Getting/Creating Accumulated Depreciation account');
   let accDepAccount = await prisma.chartOfAccount.findFirst({
     where: {
-      code: '1510',
-      companyId: companyId
-    }
+      companyId,
+      isActive: true,
+      OR: [
+        { code: '1510' },
+        { name: { contains: 'Accumulated Depreciation', mode: 'insensitive' } },
+      ],
+    },
+    orderBy: { code: 'asc' },
   });
 
   if (!accDepAccount) {
     console.log('📝 [FA] Creating new Accumulated Depreciation account');
-    const existingCode = await prisma.chartOfAccount.findFirst({
-      where: { code: '1510', companyId: companyId }
-    });
-    
-    let newCode = '1510';
-    if (existingCode) {
-      let counter = 1;
-      let codeExists = true;
-      while (codeExists) {
-        newCode = `151${counter}`;
-        const existing = await prisma.chartOfAccount.findFirst({
-          where: { code: newCode, companyId: companyId }
-        });
-        if (!existing) {
-          codeExists = false;
-        }
-        counter++;
-      }
-    }
-
     accDepAccount = await prisma.chartOfAccount.create({
       data: {
-        code: newCode,
+        code: '1510',
         name: 'Accumulated Depreciation',
-        type: 'Assets',
+        type: 'Asset',
         parentAccount: 'Non-Current Assets',
         openingBalance: 0,
         currentBalance: 0,
@@ -106,8 +76,8 @@ async function getOrCreateAccumulatedDepreciationAccount(userId, companyId) {
         balanceType: 'Credit',
         isActive: true,
         createdBy: userId,
-        companyId: companyId
-      }
+        companyId: companyId,
+      },
     });
     console.log('✅ [FA] Accumulated Depreciation account created');
   }
@@ -154,34 +124,43 @@ async function getOrCreatePayableAccount(userId, companyId) {
   return getOrCreateApAccount(userId, companyId);
 }
 
-// Helper: Get or create Opening Balance Equity account
+// Helper: Get or create Opening Balance Equity account (default COA 3010)
 async function getOrCreateOpeningBalanceEquity(userId, companyId) {
-  let equityAccount = await prisma.chartOfAccount.findFirst({
+  const candidates = await prisma.chartOfAccount.findMany({
     where: {
-      companyId: companyId,
+      companyId,
+      isActive: true,
       OR: [
+        { code: '3010' },
         { code: '3000' },
         { name: { contains: 'Opening Balance Equity', mode: 'insensitive' } },
-      ]
-    }
+      ],
+    },
+    orderBy: { code: 'asc' },
   });
+
+  let equityAccount =
+    candidates.find((a) => String(a.code) === '3010') ||
+    candidates.find((a) => /opening\s*balance\s*equity/i.test(a.name || '')) ||
+    candidates.find((a) => String(a.code) === '3000') ||
+    null;
 
   if (!equityAccount) {
     equityAccount = await prisma.chartOfAccount.create({
       data: {
-        code: '3000',
+        code: '3010',
         name: 'Opening Balance Equity',
         type: 'Equity',
         parentAccount: 'Equity',
         openingBalance: 0,
         currentBalance: 0,
-        description: 'Opening balance equity account',
+        description: 'Migration / opening balance clearing account',
         taxCode: 'N/A',
         balanceType: 'Credit',
         isActive: true,
         createdBy: userId,
-        companyId: companyId
-      }
+        companyId: companyId,
+      },
     });
   }
   return equityAccount;
@@ -475,56 +454,57 @@ async function postAcquisitionAccounting({
   });
 }
 
-// Helper: Get or create Gain/Loss account
+// Helper: Get or create Gain/Loss on disposal (avoid 5100/5200 expense collisions)
 async function getOrCreateGainLossAccount(userId, companyId, isGain) {
-  const code = isGain ? '5100' : '5200';
-  console.log(`🔍 [FA] Getting/Creating ${isGain ? 'Gain' : 'Loss'} account`);
-  
+  const code = isGain ? '4202' : '6950';
+  const name = isGain ? 'Gain on Asset Disposal' : 'Loss on Asset Disposal';
+  console.log(`🔍 [FA] Getting/Creating ${name}`);
+
   let account = await prisma.chartOfAccount.findFirst({
     where: {
-      code: code,
-      companyId: companyId
-    }
+      companyId,
+      isActive: true,
+      OR: [
+        { code },
+        { name: { equals: name, mode: 'insensitive' } },
+        {
+          name: {
+            contains: isGain ? 'Gain on' : 'Loss on',
+            mode: 'insensitive',
+          },
+        },
+      ],
+    },
+    orderBy: { code: 'asc' },
   });
 
-  if (!account) {
-    const existingCode = await prisma.chartOfAccount.findFirst({
-      where: { code: code, companyId: companyId }
-    });
-    
-    let newCode = code;
-    if (existingCode) {
-      let counter = 1;
-      let codeExists = true;
-      while (codeExists) {
-        newCode = code.substring(0, 2) + counter + '0';
-        const existing = await prisma.chartOfAccount.findFirst({
-          where: { code: newCode, companyId: companyId }
-        });
-        if (!existing) {
-          codeExists = false;
-        }
-        counter++;
-      }
-    }
+  if (account) {
+    const n = account.name || '';
+    const looksRight = isGain
+      ? /gain/i.test(n) && /dispos/i.test(n)
+      : /loss/i.test(n) && /dispos/i.test(n);
+    const looksWrong = /rent|utilit|salary|cogs|cost of goods/i.test(n);
+    if (!looksRight || looksWrong) account = null;
+  }
 
+  if (!account) {
     account = await prisma.chartOfAccount.create({
       data: {
-        code: newCode,
-        name: isGain ? 'Gain on Disposal' : 'Loss on Disposal',
-        type: isGain ? 'Income' : 'Expenses',
+        code,
+        name,
+        type: isGain ? 'Revenue' : 'Expense',
         parentAccount: isGain ? 'Other Income' : 'Other Expenses',
         openingBalance: 0,
         currentBalance: 0,
-        description: isGain ? 'Gain on asset disposal' : 'Loss on asset disposal',
+        description: isGain ? 'Gain on disposal of PPE' : 'Loss on disposal of PPE',
         taxCode: 'N/A',
         balanceType: isGain ? 'Credit' : 'Debit',
         isActive: true,
         createdBy: userId,
-        companyId: companyId
-      }
+        companyId: companyId,
+      },
     });
-    console.log(`✅ [FA] ${isGain ? 'Gain' : 'Loss'} account created`);
+    console.log(`✅ [FA] ${name} account created`);
   }
   return account;
 }
@@ -1219,8 +1199,9 @@ exports.disposeFixedAsset = async (req, res) => {
     }
 
     // ─── Calculate gain/loss ──────────────────────────────────
-    const disposalAmt = parseFloat(disposalAmount || 0);
-    const gainLoss = disposalAmt - asset.netBookValue;
+    const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const disposalAmt = round2(disposalAmount || 0);
+    const gainLoss = round2(disposalAmt - Number(asset.netBookValue || 0));
 
     // ─── Dispose Asset ──────────────────────────────────────────
     const result = await FixedAssetModel.dispose(assetId, {
@@ -1235,25 +1216,21 @@ exports.disposeFixedAsset = async (req, res) => {
     const cashAccount = await getOrCreateCashAccount(userId, companyId);
     const gainLossAccount = await getOrCreateGainLossAccount(userId, companyId, gainLoss >= 0);
 
-    // ─── Build journal lines ──────────────────────────────────
-    const journalLines = [
-      {
+    // ─── Build journal lines (IAS 16 disposal) ────────────────
+    const journalLines = [];
+    const accDep = Number(asset.accumulatedDepreciation || 0);
+    const cost = Number(asset.purchaseCost || 0);
+
+    if (accDep > 0) {
+      journalLines.push({
         accountId: accDepAccount.id,
         accountName: accDepAccount.name,
         accountCode: accDepAccount.code,
-        debit: asset.accumulatedDepreciation,
+        debit: accDep,
         credit: 0,
-        isReconciled: false
-      },
-      {
-        accountId: assetAccount.id,
-        accountName: assetAccount.name,
-        accountCode: assetAccount.code,
-        debit: 0,
-        credit: asset.purchaseCost,
-        isReconciled: false
-      }
-    ];
+        isReconciled: false,
+      });
+    }
 
     if (disposalAmt > 0) {
       journalLines.push({
@@ -1262,35 +1239,48 @@ exports.disposeFixedAsset = async (req, res) => {
         accountCode: cashAccount.code,
         debit: disposalAmt,
         credit: 0,
-        isReconciled: false
+        isReconciled: false,
       });
     }
 
-    if (gainLoss !== 0) {
-      if (gainLoss > 0) {
-        journalLines.push({
-          accountId: gainLossAccount.id,
-          accountName: gainLossAccount.name,
-          accountCode: gainLossAccount.code,
-          debit: 0,
-          credit: gainLoss,
-          isReconciled: false
-        });
-      } else {
-        journalLines.push({
-          accountId: gainLossAccount.id,
-          accountName: gainLossAccount.name,
-          accountCode: gainLossAccount.code,
-          debit: Math.abs(gainLoss),
-          credit: 0,
-          isReconciled: false
-        });
-      }
+    if (gainLoss < 0) {
+      journalLines.push({
+        accountId: gainLossAccount.id,
+        accountName: gainLossAccount.name,
+        accountCode: gainLossAccount.code,
+        debit: Math.abs(gainLoss),
+        credit: 0,
+        isReconciled: false,
+      });
     }
+
+    if (cost > 0) {
+      journalLines.push({
+        accountId: assetAccount.id,
+        accountName: assetAccount.name,
+        accountCode: assetAccount.code,
+        debit: 0,
+        credit: cost,
+        isReconciled: false,
+      });
+    }
+
+    if (gainLoss > 0) {
+      journalLines.push({
+        accountId: gainLossAccount.id,
+        accountName: gainLossAccount.name,
+        accountCode: gainLossAccount.code,
+        debit: 0,
+        credit: gainLoss,
+        isReconciled: false,
+      });
+    }
+
+    const fiscalYearId = await resolveFiscalYearId(userId, disposalDate ? new Date(disposalDate) : new Date());
 
     await prisma.journalEntry.create({
       data: {
-        entryNumber: `JE-${Date.now()}`,
+        entryNumber: `JE-FA-DISP-${Date.now()}`,
         date: disposalDate ? new Date(disposalDate) : new Date(),
         description: `Disposal of ${asset.name} (${asset.assetCode})`,
         reference: asset.assetCode,
@@ -1299,11 +1289,43 @@ exports.disposeFixedAsset = async (req, res) => {
         postedBy: userId,
         postedAt: new Date(),
         companyId: companyId,
+        fiscalYearId: fiscalYearId || null,
         lines: {
-          create: journalLines
-        }
-      }
+          create: journalLines,
+        },
+      },
     });
+
+    // Sync COA balances (AccDep / FA use absolute credit|debit storage in this module)
+    if (accDep > 0) {
+      await prisma.chartOfAccount.update({
+        where: { id: accDepAccount.id },
+        data: { currentBalance: { decrement: accDep } },
+      });
+    }
+    if (cost > 0) {
+      await prisma.chartOfAccount.update({
+        where: { id: assetAccount.id },
+        data: { currentBalance: { decrement: cost } },
+      });
+    }
+    if (disposalAmt > 0) {
+      await prisma.chartOfAccount.update({
+        where: { id: cashAccount.id },
+        data: { currentBalance: { increment: disposalAmt } },
+      });
+    }
+    if (gainLoss > 0) {
+      await prisma.chartOfAccount.update({
+        where: { id: gainLossAccount.id },
+        data: { currentBalance: { increment: gainLoss } },
+      });
+    } else if (gainLoss < 0) {
+      await prisma.chartOfAccount.update({
+        where: { id: gainLossAccount.id },
+        data: { currentBalance: { increment: Math.abs(gainLoss) } },
+      });
+    }
 
     console.log(`✅ [FA] Asset disposed: ${asset.assetCode}`);
 

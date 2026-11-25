@@ -108,6 +108,8 @@ class BalanceCalculator {
    */
   static normalizeAccountType(type) {
     if (type === 'Income') return 'Revenue';
+    if (type === 'Assets') return 'Asset';
+    if (type === 'Liabilities') return 'Liability';
     return type || 'Asset';
   }
 

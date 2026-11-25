@@ -20,14 +20,20 @@ const TYPE_MAP = {
 };
 const ALLOWED_ACCOUNT_SORT = ['code', 'name', 'type', 'currentBalance', 'createdAt', 'updatedAt'];
 async function getOrCreateOpeningBalanceEquity(userId, companyId) {
+  if (!companyId) {
+    throw new Error('companyId is required for opening balance equity');
+  }
+
+  // Prefer dedicated 3010 — never reuse Owner's Capital as the clearing account.
   let equityAccount = await prisma.chartOfAccount.findFirst({
     where: {
+      companyId,
+      isActive: true,
       OR: [
-        { code: '3010', companyId: companyId, companyId: companyId },
-        { name: 'Opening Balance Equity', companyId: companyId, companyId: companyId },
-        { name: "Owner's Capital", companyId: companyId, companyId: companyId }
-      ]
-    }
+        { code: '3010' },
+        { name: { equals: 'Opening Balance Equity', mode: 'insensitive' } },
+      ],
+    },
   });
 
   if (!equityAccount) {
@@ -44,8 +50,8 @@ async function getOrCreateOpeningBalanceEquity(userId, companyId) {
         balanceType: 'Credit',
         isActive: true,
         createdBy: userId,
-        companyId: companyId
-      }
+        companyId,
+      },
     });
   }
 
@@ -53,22 +59,28 @@ async function getOrCreateOpeningBalanceEquity(userId, companyId) {
 }
 
 async function getOpeningBalanceEntry(userId, companyId) {
+  if (!companyId) {
+    throw new Error('companyId is required for opening balance entry lookup');
+  }
+
   return await prisma.journalEntry.findFirst({
     where: {
-      
-      companyId: companyId,
-      description: {
-        contains: 'Opening Balance'
-      },
-      status: 'Posted'
+      companyId,
+      status: 'Posted',
+      OR: [
+        { type: 'OpeningBalance' },
+        { description: { contains: 'Opening Balance', mode: 'insensitive' } },
+        { reference: { startsWith: 'SYSTEM-OB' } },
+      ],
     },
     include: {
       lines: {
         include: {
-          account: true
-        }
-      }
-    }
+          account: true,
+        },
+      },
+    },
+    orderBy: { createdAt: 'asc' },
   });
 }
 
@@ -86,15 +98,20 @@ async function isOpeningEntryBalanced(journalId) {
 
 async function createOrUpdateOpeningBalanceEntry(
   userId,
+  companyId,
   accountId,
   accountType,
   amount,
   accountName,
   accountCode
 ) {
-  let openingEntry = await getOpeningBalanceEntry(userId);
+  if (!companyId) {
+    throw new Error('companyId is required for opening balance journal');
+  }
 
-  const equityAccount = await getOrCreateOpeningBalanceEquity(userId);
+  let openingEntry = await getOpeningBalanceEntry(userId, companyId);
+
+  const equityAccount = await getOrCreateOpeningBalanceEquity(userId, companyId);
 
   if (!openingEntry) {
     const isDebit = DEBIT_BALANCE_TYPES.includes(accountType);
@@ -106,9 +123,11 @@ async function createOrUpdateOpeningBalanceEntry(
         description: 'Opening Balance Initialization',
         reference: 'SYSTEM-OB',
         status: 'Posted',
+        type: 'OpeningBalance',
         createdBy: userId,
         postedBy: userId,
         postedAt: new Date(),
+        companyId,
         lines: {
           create: [
             {
@@ -345,6 +364,7 @@ const createAccount = async (req, res) => {
     if (openingBalance && openingBalance > 0 && isOpeningBalance !== false) {
       await createOrUpdateOpeningBalanceEntry(
         userId,
+        companyId,
         account.id,
         type,
         openingBalance,
@@ -358,7 +378,7 @@ const createAccount = async (req, res) => {
       });
     }
 
-    const openingEntry = await getOpeningBalanceEntry(userId);
+    const openingEntry = await getOpeningBalanceEntry(userId, companyId);
     const isBalanced = openingEntry ? await isOpeningEntryBalanced(openingEntry.id) : false;
 
     if (type === 'Equity') {
@@ -398,8 +418,8 @@ const getOpeningBalanceStatus = async (req, res) => {
     const userId = req.user.id;
 
     const companyId = (req.method === 'GET' || req.method === 'HEAD') ? (req.companyIdFilter ?? req.user.companyId) : req.user.companyId;
-    const entry = await getOpeningBalanceEntry(userId);
-    const equityAccount = await getOrCreateOpeningBalanceEquity(userId);
+    const entry = await getOpeningBalanceEntry(userId, companyId);
+    const equityAccount = await getOrCreateOpeningBalanceEquity(userId, companyId);
 
     let status = {
       hasOpeningBalance: false,
@@ -478,7 +498,7 @@ const getOpeningBalanceSummary = async (req, res) => {
     const userId = req.user.id;
 
     const companyId = (req.method === 'GET' || req.method === 'HEAD') ? (req.companyIdFilter ?? req.user.companyId) : req.user.companyId;
-    const entry = await getOpeningBalanceEntry(userId);
+    const entry = await getOpeningBalanceEntry(userId, companyId);
     
     if (!entry) {
       const noDataResponse = {

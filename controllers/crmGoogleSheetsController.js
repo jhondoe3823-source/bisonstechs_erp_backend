@@ -1,30 +1,91 @@
 /**
  * CRM Google Sheets Integration Controller
  * OAuth 2.0 + Sheets API v4 sync (server-side only)
+ * Per-company OAuth credentials stored in CrmSettings (secret encrypted).
  */
+const crypto = require('crypto');
+const { randomUUID } = require('crypto');
 const prisma = require('../prisma/client');
 const { google } = require('googleapis');
+
+const DEFAULT_REDIRECT = process.env.GOOGLE_REDIRECT_URI
+  || `${process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 5000}`}/api/crm/google-sheets/callback`;
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 function getCompanyId(req) {
   return req.user?.companyId || null;
 }
 
-function createOAuth2Client() {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI;
-  if (!clientId || !clientSecret) throw new Error('Google OAuth credentials not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in environment variables.');
-  return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+function encryptionKey() {
+  const secret = process.env.JWT_SECRET || process.env.ENCRYPTION_KEY || 'crm-google-sheets-fallback-key';
+  return crypto.scryptSync(secret, 'crm-google-oauth-salt', 32);
+}
+
+function encryptSecret(plain) {
+  if (!plain) return null;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', encryptionKey(), iv);
+  const enc = Buffer.concat([cipher.update(String(plain), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `v1:${iv.toString('base64')}:${tag.toString('base64')}:${enc.toString('base64')}`;
+}
+
+function decryptSecret(payload) {
+  if (!payload) return null;
+  if (!String(payload).startsWith('v1:')) return String(payload); // legacy/plaintext fallback
+  const [, ivB64, tagB64, dataB64] = String(payload).split(':');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey(), Buffer.from(ivB64, 'base64'));
+  decipher.setAuthTag(Buffer.from(tagB64, 'base64'));
+  return Buffer.concat([
+    decipher.update(Buffer.from(dataB64, 'base64')),
+    decipher.final(),
+  ]).toString('utf8');
+}
+
+function maskSecret(secret) {
+  if (!secret) return null;
+  const s = String(secret);
+  if (s.length <= 4) return '••••';
+  return `••••••••${s.slice(-4)}`;
+}
+
+async function ensureCrmSettings(companyId) {
+  let settings = await prisma.crmSettings.findUnique({ where: { companyId } });
+  if (!settings) {
+    settings = await prisma.crmSettings.create({ data: { id: randomUUID(), companyId } });
+  }
+  return settings;
+}
+
+async function resolveGoogleCredentials(companyId) {
+  const settings = companyId
+    ? await prisma.crmSettings.findUnique({ where: { companyId } }).catch(() => null)
+    : null;
+
+  const clientId = (settings?.googleClientId || process.env.GOOGLE_CLIENT_ID || '').trim();
+  const clientSecret = decryptSecret(settings?.googleClientSecretEnc)
+    || (process.env.GOOGLE_CLIENT_SECRET || '').trim()
+    || null;
+  const redirectUri = (settings?.googleRedirectUri || process.env.GOOGLE_REDIRECT_URI || DEFAULT_REDIRECT || '').trim();
+
+  return { clientId, clientSecret, redirectUri, fromCompany: !!(settings?.googleClientId && settings?.googleClientSecretEnc) };
+}
+
+async function createOAuth2ClientForCompany(companyId) {
+  const { clientId, clientSecret, redirectUri } = await resolveGoogleCredentials(companyId);
+  if (!clientId || !clientSecret) {
+    throw new Error('Google OAuth credentials are not configured. Open Google Sheets Settings and add your Client ID and Client Secret.');
+  }
+  return new google.auth.OAuth2(clientId, clientSecret, redirectUri || DEFAULT_REDIRECT);
 }
 
 async function getAuthClientForConnection(connection) {
-  const oauth2Client = createOAuth2Client();
+  const oauth2Client = await createOAuth2ClientForCompany(connection.companyId);
   oauth2Client.setCredentials({
     access_token: connection.accessToken,
     refresh_token: connection.refreshToken,
     expiry_date: connection.tokenExpiry ? new Date(connection.tokenExpiry).getTime() : undefined,
   });
-  // Auto-refresh token
   oauth2Client.on('tokens', async (tokens) => {
     await prisma.googleSheetConnection.update({
       where: { id: connection.id },
@@ -38,49 +99,126 @@ async function getAuthClientForConnection(connection) {
   return oauth2Client;
 }
 
-// Generate OAuth URL for frontend redirect
-const getAuthUrl = async (req, res) => {
+/** GET — public status of company Google OAuth config (secret never returned in clear) */
+const getGoogleOAuthSettings = async (req, res) => {
   try {
     const companyId = getCompanyId(req);
-    const oauth2Client = createOAuth2Client();
-    const scopes = [
-      'https://www.googleapis.com/auth/spreadsheets',
-      'https://www.googleapis.com/auth/drive.metadata.readonly',
-      'https://www.googleapis.com/auth/userinfo.email',
-    ];
-    // Store companyId in state to verify on callback
-    const state = Buffer.from(JSON.stringify({ companyId, userId: req.user.id })).toString('base64');
-    const url = oauth2Client.generateAuthUrl({ access_type: 'offline', scope: scopes, state, prompt: 'consent' });
-    return res.json({ success: true, data: { authUrl: url } });
+    if (!companyId) return res.status(400).json({ success: false, message: 'Company context required' });
+    const settings = await ensureCrmSettings(companyId);
+    const secretPlain = decryptSecret(settings.googleClientSecretEnc);
+    const envFallback = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+    const configured = !!(settings.googleClientId && settings.googleClientSecretEnc) || envFallback;
+    return res.json({
+      success: true,
+      data: {
+        configured,
+        clientId: settings.googleClientId || '',
+        hasClientSecret: !!settings.googleClientSecretEnc,
+        clientSecretMasked: maskSecret(secretPlain),
+        redirectUri: settings.googleRedirectUri || DEFAULT_REDIRECT,
+        usingEnvFallback: envFallback && !(settings.googleClientId && settings.googleClientSecretEnc),
+      },
+    });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// Handle OAuth callback — exchange code for tokens
+/** PUT — save company Google OAuth credentials */
+const updateGoogleOAuthSettings = async (req, res) => {
+  try {
+    const companyId = getCompanyId(req);
+    if (!companyId) return res.status(400).json({ success: false, message: 'Company context required' });
+
+    const clientId = (req.body.clientId || '').trim();
+    const clientSecret = (req.body.clientSecret || '').trim();
+    const redirectUri = (req.body.redirectUri || '').trim();
+
+    if (!clientId) {
+      return res.status(400).json({ success: false, message: 'Client ID is required' });
+    }
+
+    const existing = await ensureCrmSettings(companyId);
+    const data = {
+      googleClientId: clientId,
+      googleRedirectUri: redirectUri || DEFAULT_REDIRECT,
+    };
+
+    // Only replace secret when a new clear value is provided (ignore masked placeholders)
+    const isMasked = !clientSecret || clientSecret.includes('•') || clientSecret.includes('*');
+    if (!isMasked) {
+      data.googleClientSecretEnc = encryptSecret(clientSecret);
+    } else if (!existing.googleClientSecretEnc) {
+      return res.status(400).json({ success: false, message: 'Client Secret is required' });
+    }
+
+    const settings = await prisma.crmSettings.update({
+      where: { companyId },
+      data,
+    });
+
+    const secretPlain = decryptSecret(settings.googleClientSecretEnc);
+    return res.json({
+      success: true,
+      message: 'Google Sheets credentials saved securely',
+      data: {
+        configured: true,
+        clientId: settings.googleClientId || '',
+        hasClientSecret: !!settings.googleClientSecretEnc,
+        clientSecretMasked: maskSecret(secretPlain),
+        redirectUri: settings.googleRedirectUri || DEFAULT_REDIRECT,
+        usingEnvFallback: false,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// Generate OAuth URL for frontend redirect
+const getAuthUrl = async (req, res) => {
+  try {
+    const companyId = getCompanyId(req);
+    const oauth2Client = await createOAuth2ClientForCompany(companyId);
+    const scopes = [
+      'https://www.googleapis.com/auth/spreadsheets',
+      'https://www.googleapis.com/auth/drive.metadata.readonly',
+      'https://www.googleapis.com/auth/userinfo.email',
+    ];
+    const state = Buffer.from(JSON.stringify({ companyId, userId: req.user.id })).toString('base64');
+    const url = oauth2Client.generateAuthUrl({ access_type: 'offline', scope: scopes, state, prompt: 'consent' });
+    return res.json({ success: true, data: { authUrl: url } });
+  } catch (err) {
+    return res.status(400).json({ success: false, message: err.message, code: 'GOOGLE_OAUTH_NOT_CONFIGURED' });
+  }
+};
+
+// Handle OAuth callback — exchange code for tokens, then redirect to frontend
 const handleOAuthCallback = async (req, res) => {
+  const redirectFail = (msg) => {
+    const url = `${FRONTEND_URL}/crm/google-sheets?error=${encodeURIComponent(msg || 'OAuth failed')}`;
+    return res.redirect(url);
+  };
   try {
     const { code, state } = req.query;
-    if (!code || !state) return res.status(400).json({ success: false, message: 'Missing code or state' });
+    if (!code || !state) return redirectFail('Missing code or state');
 
     let stateData;
     try {
       stateData = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'));
     } catch {
-      return res.status(400).json({ success: false, message: 'Invalid state' });
+      return redirectFail('Invalid OAuth state');
     }
 
     const { companyId, userId } = stateData;
-    const oauth2Client = createOAuth2Client();
+    const oauth2Client = await createOAuth2ClientForCompany(companyId);
     const { tokens } = await oauth2Client.getToken(code);
     oauth2Client.setCredentials(tokens);
 
-    // Get user's email
     const oauth2 = google.oauth2({ auth: oauth2Client, version: 'v2' });
     const { data: userInfo } = await oauth2.userinfo.get();
 
-    // Save connection
-    const connection = await prisma.googleSheetConnection.create({
+    await prisma.googleSheetConnection.create({
       data: {
         companyId,
         googleAccountEmail: userInfo.email,
@@ -91,9 +229,10 @@ const handleOAuthCallback = async (req, res) => {
       },
     });
 
-    return res.json({ success: true, data: { connectionId: connection.id, email: userInfo.email } });
+    return res.redirect(`${FRONTEND_URL}/crm/google-sheets?connected=1`);
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+    console.error('[CRM Google Sheets] OAuth callback error:', err);
+    return redirectFail(err.message || 'OAuth failed');
   }
 };
 
@@ -341,5 +480,9 @@ const syncNow = async (req, res) => {
   }
 };
 
-module.exports = { getAuthUrl, handleOAuthCallback, getConnections, disconnectConnection, listSpreadsheets, getSheetNames, previewSheet, updateConnectionConfig, syncNow };
+module.exports = {
+  getAuthUrl, handleOAuthCallback, getConnections, disconnectConnection,
+  listSpreadsheets, getSheetNames, previewSheet, updateConnectionConfig, syncNow,
+  getGoogleOAuthSettings, updateGoogleOAuthSettings,
+};
 

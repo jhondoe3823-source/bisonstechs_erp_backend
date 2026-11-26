@@ -388,6 +388,19 @@ model Company {
   textileConeOperatingCompanies    TextileCone[]                @relation("TextileConeOperatingCompany")
   textileWindingOwningCompanies    TextileConeWindingEntry[]    @relation("TextileWindingOwningCompany")
   textileWindingOperatingCompanies TextileConeWindingEntry[]    @relation("TextileWindingOperatingCompany")
+  // Business Applications Suite
+  pmProjects                       PmProject[]                  @relation("PmProjectCompany")
+  pmProjectSettings                PmProjectSettings?           @relation("PmProjectSettingsCompany")
+  mtgMeetings                      MtgMeeting[]                 @relation("MtgMeetingCompany")
+  ntcNotices                       NtcNotice[]                  @relation("NtcNoticeCompany")
+  ntcCategories                    NtcCategory[]                @relation("NtcCategoryCompany")
+  ntcSettings                      NtcSettings?                 @relation("NtcSettingsCompany")
+  apptTypes                        ApptType[]                   @relation("ApptTypeCompany")
+  apptServices                     ApptService[]                @relation("ApptServiceCompany")
+  apptAvailabilities               ApptAvailability[]           @relation("ApptAvailabilityCompany")
+  apptHolidays                     ApptHoliday[]                @relation("ApptHolidayCompany")
+  apptBookings                     ApptBooking[]                @relation("ApptBookingCompany")
+  apptBookingSettings              ApptBookingSettings?         @relation("ApptBookingSettingsCompany")
 
   @@index([email])
   @@index([isActive])
@@ -1054,6 +1067,36 @@ model User {
   textileDailyLoomProductionsUpdated         TextileDailyLoomProduction[]       @relation("TextileDailyLoomProductionUpdater")
   textileWeftIssuesCreated                   TextileWeftIssue[]                 @relation("TextileWeftIssueCreator")
   textileWeftIssuesUpdated                   TextileWeftIssue[]                 @relation("TextileWeftIssueUpdater")
+  // Business Applications Suite
+  pmProjectsManaged                          PmProject[]                        @relation("PmProjectManager")
+  pmProjectsCreated                          PmProject[]                        @relation("PmProjectCreator")
+  pmProjectsUpdated                          PmProject[]                        @relation("PmProjectUpdater")
+  pmProjectMemberships                       PmProjectMember[]                  @relation("PmProjectMemberUser")
+  pmTasksAssigned                            PmTask[]                           @relation("PmTaskAssignee")
+  pmTasksCreated                             PmTask[]                           @relation("PmTaskCreator")
+  pmTaskComments                             PmTaskComment[]                    @relation("PmTaskCommentUser")
+  pmTimeEntries                              PmTimeEntry[]                      @relation("PmTimeEntryUser")
+  pmProjectAttachmentsUploaded               PmProjectAttachment[]              @relation("PmProjectAttachmentUploader")
+  pmProjectActivities                        PmProjectActivity[]                @relation("PmProjectActivityUser")
+  mtgMeetingsOrganized                       MtgMeeting[]                       @relation("MtgMeetingOrganizer")
+  mtgMeetingsCreated                         MtgMeeting[]                       @relation("MtgMeetingCreator")
+  mtgParticipations                          MtgParticipant[]                   @relation("MtgParticipantUser")
+  mtgAgendaItemsPresented                    MtgAgendaItem[]                    @relation("MtgAgendaItemPresenter")
+  mtgMinutesRecorded                         MtgMinute[]                        @relation("MtgMinuteRecorder")
+  mtgActionItemsAssigned                     MtgActionItem[]                    @relation("MtgActionItemAssignee")
+  mtgAttachmentsUploaded                     MtgAttachment[]                    @relation("MtgAttachmentUploader")
+  mtgActivities                              MtgActivity[]                      @relation("MtgActivityUser")
+  ntcNoticesCreated                          NtcNotice[]                        @relation("NtcNoticeCreator")
+  ntcNoticesApproved                         NtcNotice[]                        @relation("NtcNoticeApprover")
+  ntcReadReceipts                            NtcReadReceipt[]                   @relation("NtcReadReceiptUser")
+  ntcComments                                NtcComment[]                       @relation("NtcCommentUser")
+  ntcAttachmentsUploaded                     NtcAttachment[]                    @relation("NtcAttachmentUploader")
+  apptServiceAssignments                     ApptServiceAssignee[]              @relation("ApptServiceAssigneeUser")
+  apptAvailabilities                         ApptAvailability[]                 @relation("ApptAvailabilityUser")
+  apptHolidays                               ApptHoliday[]                      @relation("ApptHolidayUser")
+  apptBookingsAssigned                       ApptBooking[]                      @relation("ApptBookingAssignee")
+  apptBookingsCreated                        ApptBooking[]                      @relation("ApptBookingCreator")
+  apptActivities                             ApptActivity[]                     @relation("ApptActivityUser")
 
   @@index([email])
   @@index([roleId])
@@ -2508,6 +2551,9 @@ model Customer {
   crmOpportunities      CrmOpportunity[]       @relation("CrmOpportunityCustomer")
   crmActivities         CrmActivity[]          @relation("CrmActivityCustomer")
   crmTasks              CrmTask[]              @relation("CrmTaskCustomer")
+  // Business Applications Suite
+  pmProjects            PmProject[]            @relation("PmProjectCustomer")
+  apptBookings          ApptBooking[]          @relation("ApptBookingCustomer")
 
   @@unique([email, companyId])
   @@index([customerNumber])
@@ -12935,6 +12981,10 @@ model CrmSettings {
   defaultQuotationValidTillDays     Int      @default(30) @map("default_quotation_valid_till_days")
   carryForwardCommunication         Boolean  @default(true) @map("carry_forward_communication")
   updateTimestampOnNewCommunication Boolean  @default(true) @map("update_timestamp_on_new_communication")
+  // Per-company Google Sheets OAuth (secret stored encrypted)
+  googleClientId                    String?  @map("google_client_id")
+  googleClientSecretEnc             String?  @map("google_client_secret_enc")
+  googleRedirectUri                 String?  @map("google_redirect_uri")
   createdAt                         DateTime @default(now()) @map("created_at")
   updatedAt                         DateTime @updatedAt @map("updated_at")
 
@@ -13548,4 +13598,678 @@ model TextileDailyLoomProduction {
   @@index([companyId, productionDate])
   @@index([allocationId])
   @@map("textile_daily_loom_productions")
+}
+
+// ============================================================
+// BUSINESS APPLICATIONS SUITE — PHASE 1
+// Project Management (Pm*), Meetings (Mtg*), Notice Board (Ntc*),
+// Appointment Booking (Appt*)
+// ============================================================
+
+// ───────────────────────── PROJECT MANAGEMENT ─────────────────────────
+
+model PmProject {
+  id              String    @id @default(uuid())
+  companyId       String    @map("company_id")
+  projectCode     String    @map("project_code")
+  name            String
+  description     String?
+  customerId      String?   @map("customer_id")
+  managerId       String?   @map("manager_id")
+  startDate       DateTime? @map("start_date")
+  endDate         DateTime? @map("end_date")
+  budget          Decimal   @default(0) @db.Decimal(15, 2)
+  estimatedCost   Decimal   @default(0) @map("estimated_cost") @db.Decimal(15, 2)
+  priority        String    @default("medium") // low | medium | high | urgent
+  status          String    @default("planning") // planning | active | on_hold | completed | cancelled
+  progressPercent Int       @default(0) @map("progress_percent")
+  isArchived      Boolean   @default(false) @map("is_archived")
+  createdBy       String    @map("created_by")
+  updatedBy       String?   @map("updated_by")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  company     Company             @relation("PmProjectCompany", fields: [companyId], references: [id], onDelete: Cascade)
+  customer    Customer?           @relation("PmProjectCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  manager     User?               @relation("PmProjectManager", fields: [managerId], references: [id], onDelete: SetNull)
+  creator     User                @relation("PmProjectCreator", fields: [createdBy], references: [id])
+  updater     User?               @relation("PmProjectUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
+  members     PmProjectMember[]
+  tasks       PmTask[]
+  milestones  PmMilestone[]
+  timeEntries PmTimeEntry[]
+  attachments PmProjectAttachment[]
+  activities  PmProjectActivity[]
+
+  @@unique([companyId, projectCode])
+  @@index([companyId])
+  @@index([companyId, status])
+  @@index([companyId, isArchived])
+  @@index([managerId])
+  @@index([customerId])
+  @@map("pm_projects")
+}
+
+model PmProjectMember {
+  id        String   @id @default(uuid())
+  projectId String   @map("project_id")
+  userId    String   @map("user_id")
+  role      String   @default("member") // manager | member | viewer
+  createdAt DateTime @default(now()) @map("created_at")
+
+  project PmProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User      @relation("PmProjectMemberUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@map("pm_project_members")
+}
+
+model PmTask {
+  id              String    @id @default(uuid())
+  projectId       String    @map("project_id")
+  parentTaskId    String?   @map("parent_task_id")
+  title           String
+  description     String?
+  assigneeId      String?   @map("assignee_id")
+  priority        String    @default("medium")
+  status          String    @default("todo") // todo | in_progress | review | done | blocked | cancelled
+  startDate       DateTime? @map("start_date")
+  dueDate         DateTime? @map("due_date")
+  progressPercent Int       @default(0) @map("progress_percent")
+  estimatedHours  Decimal   @default(0) @map("estimated_hours") @db.Decimal(10, 2)
+  actualHours     Decimal   @default(0) @map("actual_hours") @db.Decimal(10, 2)
+  sortOrder       Int       @default(0) @map("sort_order")
+  createdBy       String    @map("created_by")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  project         PmProject             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parentTask      PmTask?               @relation("PmTaskParent", fields: [parentTaskId], references: [id], onDelete: Cascade)
+  subtasks        PmTask[]              @relation("PmTaskParent")
+  assignee        User?                 @relation("PmTaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  creator         User                  @relation("PmTaskCreator", fields: [createdBy], references: [id])
+  dependencies    PmTaskDependency[]    @relation("PmTaskDependencyTask")
+  dependents      PmTaskDependency[]    @relation("PmTaskDependencyDependsOn")
+  checklistItems  PmTaskChecklistItem[]
+  comments        PmTaskComment[]
+  timeEntries     PmTimeEntry[]
+  attachments     PmProjectAttachment[]
+  activities      PmProjectActivity[]
+  meetingActions  MtgActionItem[]       @relation("MtgActionItemLinkedTask")
+
+  @@index([projectId])
+  @@index([projectId, status])
+  @@index([assigneeId])
+  @@index([parentTaskId])
+  @@index([dueDate])
+  @@map("pm_tasks")
+}
+
+model PmTaskDependency {
+  id              String   @id @default(uuid())
+  taskId          String   @map("task_id")
+  dependsOnTaskId String   @map("depends_on_task_id")
+  type            String   @default("finish_to_start") // finish_to_start | start_to_start | finish_to_finish | start_to_finish
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  task          PmTask @relation("PmTaskDependencyTask", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOnTask PmTask @relation("PmTaskDependencyDependsOn", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, dependsOnTaskId])
+  @@index([dependsOnTaskId])
+  @@map("pm_task_dependencies")
+}
+
+model PmTaskChecklistItem {
+  id        String   @id @default(uuid())
+  taskId    String   @map("task_id")
+  title     String
+  isDone    Boolean  @default(false) @map("is_done")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  task PmTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@map("pm_task_checklist_items")
+}
+
+model PmTaskComment {
+  id        String   @id @default(uuid())
+  taskId    String   @map("task_id")
+  userId    String   @map("user_id")
+  body      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  task PmTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User   @relation("PmTaskCommentUser", fields: [userId], references: [id])
+
+  @@index([taskId])
+  @@index([userId])
+  @@map("pm_task_comments")
+}
+
+model PmMilestone {
+  id          String    @id @default(uuid())
+  projectId   String    @map("project_id")
+  title       String
+  description String?
+  targetDate  DateTime? @map("target_date")
+  status      String    @default("pending") // pending | in_progress | completed | missed
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  project PmProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([targetDate])
+  @@map("pm_milestones")
+}
+
+model PmTimeEntry {
+  id              String    @id @default(uuid())
+  projectId       String    @map("project_id")
+  taskId          String?   @map("task_id")
+  userId          String    @map("user_id")
+  startedAt       DateTime  @map("started_at")
+  endedAt         DateTime? @map("ended_at")
+  durationMinutes Int       @default(0) @map("duration_minutes")
+  description     String?
+  isRunning       Boolean   @default(false) @map("is_running")
+  source          String    @default("manual") // timer | manual
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  project PmProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task    PmTask?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  user    User      @relation("PmTimeEntryUser", fields: [userId], references: [id])
+
+  @@index([projectId])
+  @@index([taskId])
+  @@index([userId])
+  @@index([userId, isRunning])
+  @@map("pm_time_entries")
+}
+
+model PmProjectAttachment {
+  id         String   @id @default(uuid())
+  projectId  String   @map("project_id")
+  taskId     String?  @map("task_id")
+  fileName   String   @map("file_name")
+  fileUrl    String   @map("file_url")
+  mimeType   String?  @map("mime_type")
+  sizeBytes  Int      @default(0) @map("size_bytes")
+  uploadedBy String   @map("uploaded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  project  PmProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task     PmTask?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  uploader User      @relation("PmProjectAttachmentUploader", fields: [uploadedBy], references: [id])
+
+  @@index([projectId])
+  @@index([taskId])
+  @@map("pm_project_attachments")
+}
+
+model PmProjectActivity {
+  id        String   @id @default(uuid())
+  projectId String   @map("project_id")
+  taskId    String?  @map("task_id")
+  userId    String   @map("user_id")
+  action    String
+  message   String
+  meta      Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  project PmProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task    PmTask?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  user    User      @relation("PmProjectActivityUser", fields: [userId], references: [id])
+
+  @@index([projectId, createdAt])
+  @@index([taskId])
+  @@map("pm_project_activities")
+}
+
+model PmProjectSettings {
+  id                 String   @id @default(uuid())
+  companyId          String   @unique @map("company_id")
+  defaultStatuses    Json?    @map("default_statuses")
+  defaultPriorities  Json?    @map("default_priorities")
+  customFields       Json?    @map("custom_fields")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  company Company @relation("PmProjectSettingsCompany", fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("pm_project_settings")
+}
+
+// ───────────────────────── MEETING MANAGEMENT ─────────────────────────
+
+model MtgMeeting {
+  id              String   @id @default(uuid())
+  companyId       String   @map("company_id")
+  title           String
+  description     String?
+  meetingType     String   @default("internal") @map("meeting_type") // internal | client | board | standup | other
+  startsAt        DateTime @map("starts_at")
+  endsAt          DateTime @map("ends_at")
+  durationMinutes Int      @default(60) @map("duration_minutes")
+  location        String?
+  meetingLink     String?  @map("meeting_link")
+  organizerId     String   @map("organizer_id")
+  status          String   @default("scheduled") // scheduled | in_progress | completed | cancelled
+  agendaSummary   String?  @map("agenda_summary")
+  minutesSummary  String?  @map("minutes_summary")
+  createdBy       String   @map("created_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company      Company          @relation("MtgMeetingCompany", fields: [companyId], references: [id], onDelete: Cascade)
+  organizer    User             @relation("MtgMeetingOrganizer", fields: [organizerId], references: [id])
+  creator      User             @relation("MtgMeetingCreator", fields: [createdBy], references: [id])
+  participants MtgParticipant[]
+  agendaItems  MtgAgendaItem[]
+  minutes      MtgMinute[]
+  actionItems  MtgActionItem[]
+  attachments  MtgAttachment[]
+  activities   MtgActivity[]
+
+  @@index([companyId])
+  @@index([companyId, startsAt])
+  @@index([companyId, status])
+  @@index([organizerId])
+  @@map("mtg_meetings")
+}
+
+model MtgParticipant {
+  id         String   @id @default(uuid())
+  meetingId  String   @map("meeting_id")
+  userId     String?  @map("user_id")
+  guestName  String?  @map("guest_name")
+  guestEmail String?  @map("guest_email")
+  response   String   @default("pending") // pending | accepted | rejected | tentative
+  attended   Boolean?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  meeting MtgMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user    User?      @relation("MtgParticipantUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([meetingId])
+  @@index([userId])
+  @@map("mtg_participants")
+}
+
+model MtgAgendaItem {
+  id               String   @id @default(uuid())
+  meetingId        String   @map("meeting_id")
+  title            String
+  presenterId      String?  @map("presenter_id")
+  allocatedMinutes Int?     @map("allocated_minutes")
+  sortOrder        Int      @default(0) @map("sort_order")
+  notes            String?
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  meeting   MtgMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  presenter User?      @relation("MtgAgendaItemPresenter", fields: [presenterId], references: [id], onDelete: SetNull)
+
+  @@index([meetingId])
+  @@map("mtg_agenda_items")
+}
+
+model MtgMinute {
+  id         String   @id @default(uuid())
+  meetingId  String   @map("meeting_id")
+  content    String
+  decisions  String?
+  recordedBy String   @map("recorded_by")
+  recordedAt DateTime @default(now()) @map("recorded_at")
+
+  meeting  MtgMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  recorder User       @relation("MtgMinuteRecorder", fields: [recordedBy], references: [id])
+
+  @@index([meetingId])
+  @@map("mtg_minutes")
+}
+
+model MtgActionItem {
+  id           String    @id @default(uuid())
+  meetingId    String    @map("meeting_id")
+  title        String
+  assigneeId   String?   @map("assignee_id")
+  dueDate      DateTime? @map("due_date")
+  status       String    @default("open") // open | in_progress | done | cancelled
+  linkedTaskId String?   @map("linked_task_id")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  meeting    MtgMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  assignee   User?      @relation("MtgActionItemAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  linkedTask PmTask?    @relation("MtgActionItemLinkedTask", fields: [linkedTaskId], references: [id], onDelete: SetNull)
+
+  @@index([meetingId])
+  @@index([assigneeId])
+  @@index([status])
+  @@map("mtg_action_items")
+}
+
+model MtgAttachment {
+  id         String   @id @default(uuid())
+  meetingId  String   @map("meeting_id")
+  fileName   String   @map("file_name")
+  fileUrl    String   @map("file_url")
+  mimeType   String?  @map("mime_type")
+  sizeBytes  Int      @default(0) @map("size_bytes")
+  uploadedBy String   @map("uploaded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  meeting  MtgMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  uploader User       @relation("MtgAttachmentUploader", fields: [uploadedBy], references: [id])
+
+  @@index([meetingId])
+  @@map("mtg_attachments")
+}
+
+model MtgActivity {
+  id        String   @id @default(uuid())
+  meetingId String   @map("meeting_id")
+  userId    String   @map("user_id")
+  action    String
+  message   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  meeting MtgMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user    User       @relation("MtgActivityUser", fields: [userId], references: [id])
+
+  @@index([meetingId, createdAt])
+  @@map("mtg_activities")
+}
+
+// ───────────────────────── NOTICE BOARD ─────────────────────────
+
+model NtcNotice {
+  id            String    @id @default(uuid())
+  companyId     String    @map("company_id")
+  title         String
+  body          String
+  category      String    @default("general")
+  priority      String    @default("normal") // low | normal | high | urgent
+  status        String    @default("draft") // draft | pending_approval | scheduled | published | expired | archived
+  publishAt     DateTime? @map("publish_at")
+  expireAt      DateTime? @map("expire_at")
+  allowComments Boolean   @default(true) @map("allow_comments")
+  createdBy     String    @map("created_by")
+  approvedBy    String?   @map("approved_by")
+  publishedAt   DateTime? @map("published_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  company      Company          @relation("NtcNoticeCompany", fields: [companyId], references: [id], onDelete: Cascade)
+  creator      User             @relation("NtcNoticeCreator", fields: [createdBy], references: [id])
+  approver     User?            @relation("NtcNoticeApprover", fields: [approvedBy], references: [id], onDelete: SetNull)
+  audiences    NtcAudience[]
+  readReceipts NtcReadReceipt[]
+  comments     NtcComment[]
+  attachments  NtcAttachment[]
+
+  @@index([companyId])
+  @@index([companyId, status])
+  @@index([companyId, publishAt])
+  @@index([createdBy])
+  @@map("ntc_notices")
+}
+
+model NtcCategory {
+  id        String   @id @default(uuid())
+  companyId String   @map("company_id")
+  name      String
+  slug      String
+  isSystem  Boolean  @default(false) @map("is_system")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation("NtcCategoryCompany", fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, slug])
+  @@index([companyId])
+  @@map("ntc_categories")
+}
+
+model NtcAudience {
+  id           String   @id @default(uuid())
+  noticeId     String   @map("notice_id")
+  audienceType String   @default("company") @map("audience_type") // company | department | role | employee | branch
+  audienceId   String?  @map("audience_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  notice NtcNotice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  @@index([noticeId])
+  @@index([audienceType, audienceId])
+  @@map("ntc_audiences")
+}
+
+model NtcReadReceipt {
+  id       String   @id @default(uuid())
+  noticeId String   @map("notice_id")
+  userId   String   @map("user_id")
+  readAt   DateTime @default(now()) @map("read_at")
+
+  notice NtcNotice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+  user   User      @relation("NtcReadReceiptUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([noticeId, userId])
+  @@index([userId])
+  @@map("ntc_read_receipts")
+}
+
+model NtcComment {
+  id        String   @id @default(uuid())
+  noticeId  String   @map("notice_id")
+  userId    String   @map("user_id")
+  body      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  notice NtcNotice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+  user   User      @relation("NtcCommentUser", fields: [userId], references: [id])
+
+  @@index([noticeId])
+  @@index([userId])
+  @@map("ntc_comments")
+}
+
+model NtcAttachment {
+  id         String   @id @default(uuid())
+  noticeId   String   @map("notice_id")
+  fileName   String   @map("file_name")
+  fileUrl    String   @map("file_url")
+  mimeType   String?  @map("mime_type")
+  sizeBytes  Int      @default(0) @map("size_bytes")
+  uploadedBy String   @map("uploaded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  notice   NtcNotice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+  uploader User      @relation("NtcAttachmentUploader", fields: [uploadedBy], references: [id])
+
+  @@index([noticeId])
+  @@map("ntc_attachments")
+}
+
+model NtcSettings {
+  id              String   @id @default(uuid())
+  companyId       String   @unique @map("company_id")
+  requireApproval Boolean  @default(false) @map("require_approval")
+  notifyOnPublish Boolean  @default(true) @map("notify_on_publish")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company Company @relation("NtcSettingsCompany", fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("ntc_settings")
+}
+
+// ───────────────────────── APPOINTMENT BOOKING ─────────────────────────
+// Scheduling / reservation product — distinct from CRM activities.
+
+model ApptType {
+  id              String   @id @default(uuid())
+  companyId       String   @map("company_id")
+  name            String
+  description     String?
+  color           String?
+  durationMinutes Int      @default(30) @map("duration_minutes")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company  Company       @relation("ApptTypeCompany", fields: [companyId], references: [id], onDelete: Cascade)
+  services ApptService[]
+  bookings ApptBooking[]
+
+  @@index([companyId])
+  @@index([companyId, isActive])
+  @@map("appt_types")
+}
+
+model ApptService {
+  id              String   @id @default(uuid())
+  companyId       String   @map("company_id")
+  name            String
+  description     String?
+  durationMinutes Int      @default(30) @map("duration_minutes")
+  price           Decimal? @db.Decimal(15, 2)
+  typeId          String?  @map("type_id")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company   Company               @relation("ApptServiceCompany", fields: [companyId], references: [id], onDelete: Cascade)
+  type      ApptType?             @relation(fields: [typeId], references: [id], onDelete: SetNull)
+  assignees ApptServiceAssignee[]
+  bookings  ApptBooking[]
+
+  @@index([companyId])
+  @@index([companyId, isActive])
+  @@index([typeId])
+  @@map("appt_services")
+}
+
+model ApptServiceAssignee {
+  id        String   @id @default(uuid())
+  serviceId String   @map("service_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  service ApptService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  user    User        @relation("ApptServiceAssigneeUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, userId])
+  @@index([userId])
+  @@map("appt_service_assignees")
+}
+
+model ApptAvailability {
+  id        String   @id @default(uuid())
+  companyId String   @map("company_id")
+  userId    String?  @map("user_id")
+  dayOfWeek Int      @map("day_of_week") // 0 (Sunday) – 6 (Saturday)
+  startTime String   @map("start_time") // HH:mm
+  endTime   String   @map("end_time") // HH:mm
+  isBreak   Boolean  @default(false) @map("is_break")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation("ApptAvailabilityCompany", fields: [companyId], references: [id], onDelete: Cascade)
+  user    User?   @relation("ApptAvailabilityUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([companyId, userId, dayOfWeek])
+  @@map("appt_availability")
+}
+
+model ApptHoliday {
+  id        String   @id @default(uuid())
+  companyId String   @map("company_id")
+  date      DateTime @db.Date
+  name      String?
+  userId    String?  @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  company Company @relation("ApptHolidayCompany", fields: [companyId], references: [id], onDelete: Cascade)
+  user    User?   @relation("ApptHolidayUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([companyId, date])
+  @@map("appt_holidays")
+}
+
+model ApptBooking {
+  id            String   @id @default(uuid())
+  companyId     String   @map("company_id")
+  serviceId     String?  @map("service_id")
+  typeId        String?  @map("type_id")
+  userId        String?  @map("user_id") // assignee
+  customerId    String?  @map("customer_id")
+  customerName  String   @map("customer_name")
+  customerEmail String?  @map("customer_email")
+  customerPhone String?  @map("customer_phone")
+  startsAt      DateTime @map("starts_at")
+  endsAt        DateTime @map("ends_at")
+  status        String   @default("pending") // pending | confirmed | checked_in | in_progress | completed | cancelled | no_show
+  location      String?
+  meetingLink   String?  @map("meeting_link")
+  notes         String?
+  publicToken   String?  @unique @map("public_token")
+  createdBy     String?  @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  company    Company        @relation("ApptBookingCompany", fields: [companyId], references: [id], onDelete: Cascade)
+  service    ApptService?   @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  type       ApptType?      @relation(fields: [typeId], references: [id], onDelete: SetNull)
+  assignee   User?          @relation("ApptBookingAssignee", fields: [userId], references: [id], onDelete: SetNull)
+  customer   Customer?      @relation("ApptBookingCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  creator    User?          @relation("ApptBookingCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  activities ApptActivity[]
+
+  @@index([companyId])
+  @@index([companyId, startsAt])
+  @@index([companyId, status])
+  @@index([userId, startsAt])
+  @@index([customerId])
+  @@map("appt_bookings")
+}
+
+model ApptBookingSettings {
+  id                    String   @id @default(uuid())
+  companyId             String   @unique @map("company_id")
+  bufferMinutes         Int      @default(0) @map("buffer_minutes")
+  slotIntervalMinutes   Int      @default(30) @map("slot_interval_minutes")
+  requireApproval       Boolean  @default(false) @map("require_approval")
+  publicSlug            String?  @unique @map("public_slug")
+  publicEnabled         Boolean  @default(false) @map("public_enabled")
+  reminderMinutesBefore Int      @default(60) @map("reminder_minutes_before")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  company Company @relation("ApptBookingSettingsCompany", fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("appt_booking_settings")
+}
+
+model ApptActivity {
+  id        String   @id @default(uuid())
+  bookingId String   @map("booking_id")
+  userId    String?  @map("user_id")
+  action    String
+  message   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  booking ApptBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  user    User?       @relation("ApptActivityUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([bookingId, createdAt])
+  @@map("appt_activities")
 }

@@ -208,4 +208,10 @@ app.use('/api/import', require('./routes/importRoutes'));
 app.use('/api/export', require('./routes/exportRoutes'));
 app.use('/api/crm', require('./routes/crmRoutes'));
 
+// Business Applications Suite (Phase 1)
+app.use('/api/projects', require('./routes/projectManagementRoutes'));
+app.use('/api/meetings', require('./routes/meetingManagementRoutes'));
+app.use('/api/notices', require('./routes/noticeBoardRoutes'));
+app.use('/api/appointments', require('./routes/appointmentBookingRoutes'));
+
 module.exports = app;

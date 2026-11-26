@@ -25,6 +25,7 @@ const {
 const {
   getAuthUrl, handleOAuthCallback, getConnections, disconnectConnection,
   listSpreadsheets, getSheetNames, previewSheet, updateConnectionConfig, syncNow,
+  getGoogleOAuthSettings, updateGoogleOAuthSettings,
 } = require('../controllers/crmGoogleSheetsController');
 
 const {
@@ -108,6 +109,8 @@ router.get('/import/mapping-templates', requirePermission('crm.import.view'),   
 router.post('/import/mapping-templates',requirePermission('crm.import.import'), saveMappingTemplate);
 
 // ─── Google Sheets ────────────────────────────────────────────────────────────
+router.get('/google-sheets/oauth-settings',                              requirePermission('crm.google_sheets.view'),   getGoogleOAuthSettings);
+router.put('/google-sheets/oauth-settings',                              requirePermission('crm.google_sheets.edit'),   updateGoogleOAuthSettings);
 router.get('/google-sheets/auth-url',                                    requirePermission('crm.google_sheets.view'),   getAuthUrl);
 router.get('/google-sheets/callback',                                    handleOAuthCallback);
 router.get('/google-sheets/connections',                                 requirePermission('crm.google_sheets.view'),   getConnections);

@@ -409,6 +409,10 @@ const MODULE_DEFINITIONS = [
       res('module_trading', 'Module Tile: Trading', 'Show Trading on main dashboard selection', VIEW_ONLY),
       res('module_import', 'Module Tile: Import', 'Show Import Management on main dashboard selection', VIEW_ONLY),
       res('module_export', 'Module Tile: Export', 'Show Export Management on main dashboard selection', VIEW_ONLY),
+      res('module_projects', 'Module Tile: Project Management', 'Show Projects on main dashboard selection', VIEW_ONLY),
+      res('module_meetings', 'Module Tile: Meetings', 'Show Meetings on main dashboard selection', VIEW_ONLY),
+      res('module_notices', 'Module Tile: Notice Board', 'Show Notice Board on main dashboard selection', VIEW_ONLY),
+      res('module_appointments', 'Module Tile: Appointments', 'Show Appointment Booking on main dashboard selection', VIEW_ONLY),
       res('widgets_sales', 'Sales Summary & Charts', 'Sales revenue and trajectory widgets', VIEW_ONLY, ['ALL', 'OWN']),
       res('widgets_purchases', 'Purchases & Vendor Summary', 'Purchase charts and open POs', VIEW_ONLY),
       res('widgets_financial', 'Revenue, Expenses & Profit', 'Gross / net profit widgets', VIEW_ONLY),
@@ -448,6 +452,84 @@ const MODULE_DEFINITIONS = [
       res('campaigns', 'Campaigns', 'Create and manage marketing campaigns', CRUD, ['ALL', 'OWN', 'TEAM']),
       res('accounts', 'Accounts (Customers)', 'View customer accounts with CRM enrichment', VIEW_ONLY),
       res('reports', 'CRM Reports', 'Lead, source, conversion, pipeline, and performance reports', ['view', 'export'])
+    ]
+  },
+
+  // ═══════════════════════════════════════════════════════════
+  // PROJECT MANAGEMENT  (/projects/*)
+  // ═══════════════════════════════════════════════════════════
+  {
+    key: 'projects',
+    name: 'Project Management',
+    description: 'Projects, tasks, milestones, teams, time tracking, and project reports',
+    resources: [
+      res('dashboard', 'Projects Dashboard', 'Project KPIs, workload, and activity overview', VIEW_ONLY),
+      res('projects', 'Projects', 'Create and manage projects', ['view', 'create', 'edit', 'delete', 'export'], ['ALL', 'OWN', 'TEAM']),
+      res('tasks', 'Project Tasks', 'Tasks, subtasks, checklists, and dependencies', CRUD, ['ALL', 'OWN', 'TEAM']),
+      res('milestones', 'Project Milestones', 'Project milestones and deadlines', CRUD, ['ALL', 'TEAM']),
+      res('teams', 'Project Teams', 'Project members and roles', CRUD, ['ALL', 'TEAM']),
+      res('time', 'Time Tracking', 'Timers and timesheet entries', ['view', 'create', 'edit', 'delete', 'approve', 'export'], ['ALL', 'OWN', 'TEAM']),
+      res('communication', 'Project Communication', 'Task comments, attachments, and activity feed', ['view', 'create', 'delete'], ['ALL', 'OWN', 'TEAM']),
+      res('reports', 'Project Reports', 'Progress, workload, and time reports', VIEW_EXPORT, ['ALL', 'OWN', 'TEAM']),
+      res('settings', 'Project Settings', 'Default statuses, priorities, and custom fields', VIEW_EDIT)
+    ]
+  },
+
+  // ═══════════════════════════════════════════════════════════
+  // MEETING MANAGEMENT  (/meetings/*)
+  // ═══════════════════════════════════════════════════════════
+  {
+    key: 'meetings',
+    name: 'Meeting Management',
+    description: 'Scheduling, agendas, minutes, and action items',
+    resources: [
+      res('dashboard', 'Meetings Dashboard', 'Upcoming meetings and action item overview', VIEW_ONLY),
+      res('meetings', 'Meetings', 'Schedule and manage meetings', ['view', 'create', 'edit', 'delete', 'cancel', 'export'], ['ALL', 'OWN', 'TEAM']),
+      res('calendar', 'Meetings Calendar', 'Calendar view of meetings', VIEW_ONLY, ['ALL', 'OWN']),
+      res('participants', 'Meeting Participants', 'Invite and manage attendees and responses', CRUD, ['ALL', 'OWN']),
+      res('agenda', 'Meeting Agenda', 'Agenda items and presenters', CRUD, ['ALL', 'OWN']),
+      res('minutes', 'Meeting Minutes', 'Minutes and decisions', ['view', 'create', 'edit', 'delete', 'print', 'export'], ['ALL', 'OWN']),
+      res('action_items', 'Action Items', 'Follow-up actions from meetings', CRUD, ['ALL', 'OWN', 'TEAM']),
+      res('reports', 'Meeting Reports', 'Meeting attendance and action item reports', VIEW_EXPORT),
+      res('settings', 'Meeting Settings', 'Meeting module preferences', VIEW_EDIT)
+    ]
+  },
+
+  // ═══════════════════════════════════════════════════════════
+  // NOTICE BOARD  (/notices/*)
+  // ═══════════════════════════════════════════════════════════
+  {
+    key: 'notices',
+    name: 'Notice Board',
+    description: 'Company announcements, audiences, approvals, and read tracking',
+    resources: [
+      res('dashboard', 'Notice Board Dashboard', 'Notice board home and read stats', VIEW_ONLY),
+      res('notices', 'Notices', 'Create, publish, and manage notices', ['view', 'create', 'edit', 'delete', 'approve', 'export'], ['ALL', 'OWN']),
+      res('categories', 'Notice Categories', 'Notice category master', CRUD),
+      res('audience', 'Notice Audience', 'Target departments, roles, branches, and employees', ['view', 'create', 'edit', 'delete']),
+      res('comments', 'Notice Comments', 'Comment on and moderate notices', ['view', 'create', 'delete'], ['ALL', 'OWN']),
+      res('reports', 'Notice Reports', 'Read receipts and engagement reports', VIEW_EXPORT),
+      res('settings', 'Notice Board Settings', 'Approval workflow and notification preferences', VIEW_EDIT)
+    ]
+  },
+
+  // ═══════════════════════════════════════════════════════════
+  // APPOINTMENT BOOKING  (/appointments/*)
+  // ═══════════════════════════════════════════════════════════
+  {
+    key: 'appointments',
+    name: 'Appointment Booking',
+    description: 'Services, availability, bookings, and public booking page',
+    resources: [
+      res('dashboard', 'Appointments Dashboard', 'Booking KPIs and today\'s schedule', VIEW_ONLY),
+      res('types', 'Appointment Types', 'Appointment type master', CRUD),
+      res('services', 'Appointment Services', 'Bookable services, pricing, and staff assignment', CRUD),
+      res('calendar', 'Appointments Calendar', 'Calendar view of bookings', VIEW_ONLY, ['ALL', 'OWN']),
+      res('availability', 'Availability & Holidays', 'Working hours, breaks, and holidays', CRUD, ['ALL', 'OWN']),
+      res('bookings', 'Bookings', 'Create and manage appointment bookings', ['view', 'create', 'edit', 'delete', 'approve', 'cancel', 'export'], ['ALL', 'OWN']),
+      res('public_page', 'Public Booking Page', 'Configure the public booking page', VIEW_EDIT),
+      res('reports', 'Appointment Reports', 'Booking and utilisation reports', VIEW_EXPORT, ['ALL', 'OWN']),
+      res('settings', 'Appointment Settings', 'Buffers, slot interval, approval, and reminders', VIEW_EDIT)
     ]
   },
 

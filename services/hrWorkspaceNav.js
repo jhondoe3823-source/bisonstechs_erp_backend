@@ -257,7 +257,7 @@ const workspaces = [
       {
         section: 'Accounting Entries',
         items: [
-          { kind: 'page', label: 'Payment Entry', href: '/payments', doctype: 'Payment Entry' },
+          { kind: 'page', label: 'Payment Entry', href: '/accounting/purchase-payments', doctype: 'Payment Entry' },
           { kind: 'page', label: 'Journal Entry', href: '/accounting/journal-entries', doctype: 'Journal Entry' }
         ]
       },
@@ -266,9 +266,9 @@ const workspaces = [
         items: [
           { kind: 'report', label: 'Unpaid Expense Claim', report: 'unpaid-expense-claim' },
           { kind: 'report', label: 'Vehicle Expenses', report: 'vehicle-expenses' },
-          { kind: 'page', label: 'Accounts Receivable', href: '/reports/accounts-receivable', report: 'Accounts Receivable' },
-          { kind: 'page', label: 'Accounts Payable', href: '/reports/accounts-payable', report: 'Accounts Payable' },
-          { kind: 'page', label: 'General Ledger', href: '/reports/general-ledger', report: 'General Ledger' }
+          { kind: 'page', label: 'Accounts Receivable', href: '/accounting/accounts-receivable', report: 'Accounts Receivable' },
+          { kind: 'page', label: 'Accounts Payable', href: '/accounting/accounts-payable', report: 'Accounts Payable' },
+          { kind: 'page', label: 'General Ledger', href: '/accounting/general-ledger', report: 'General Ledger' }
         ]
       },
       { kind: 'document', label: 'Settings', resource: 'hr-settings', doctype: 'HR Settings' }
@@ -364,8 +364,8 @@ const workspaces = [
         items: [
           { kind: 'report', label: 'Employee CTC Break-up', report: 'employee-ctc-breakup' },
           { kind: 'report', label: 'Salary Register', report: 'salary-register' },
-          { kind: 'page', label: 'Accounts Payable', href: '/reports/accounts-payable', report: 'Accounts Payable' },
-          { kind: 'page', label: 'General Ledger', href: '/reports/general-ledger', report: 'General Ledger' }
+          { kind: 'page', label: 'Accounts Payable', href: '/accounting/accounts-payable', report: 'Accounts Payable' },
+          { kind: 'page', label: 'General Ledger', href: '/accounting/general-ledger', report: 'General Ledger' }
         ]
       },
       {
@@ -389,7 +389,17 @@ const trackingLinks = [{ label: 'Live Tracking', href: '/hr/live-tracking' }];
 // itself, and the workspaces that ship a Dashboard also link it. Both are
 // generated instead of repeated by hand so the item order stays verifiable
 // against the source JSON.
-const WITH_DASHBOARD = new Set(['hr-setup', 'tenure', 'recruitment', 'shift-and-attendance', 'expenses', 'payroll']);
+const WITH_DASHBOARD = new Set([
+  'hr-setup',
+  'tenure',
+  'recruitment',
+  'shift-and-attendance',
+  'leaves',
+  'expenses',
+  'performance',
+  'tax-and-benefits',
+  'payroll'
+]);
 
 for (const ws of workspaces) {
   const items = [{ kind: 'home', label: 'Home', href: `/hr/${ws.slug}` }, ...ws.items];

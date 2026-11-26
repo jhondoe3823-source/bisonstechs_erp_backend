@@ -788,15 +788,31 @@ async function list(resource, req, params = {}) {
   const limit = Math.min(500, Math.max(1, Number(params.limit || 200)));
   const offset = Math.max(0, Number(params.offset || 0));
 
-  const sortField = String(params.sort || 'createdAt');
-  const known = fieldsOf(def).some((f) => f.n === sortField) ||
-    ['createdAt', 'updatedAt', 'status', 'id'].includes(sortField);
-  const orderBy = known ? { [sortField]: params.dir === 'asc' ? 'asc' : 'desc' } : { createdAt: 'desc' };
+  const requestedSort = String(params.sort || def.defaultSort || 'createdAt');
+  const fieldNames = fieldsOf(def).map((f) => f.n);
+  const known = fieldNames.includes(requestedSort) ||
+    ['createdAt', 'updatedAt', 'status', 'id'].includes(requestedSort);
+  const dir = params.dir === 'asc' ? 'asc' : 'desc';
+  let orderBy = known ? { [requestedSort]: dir } : { id: 'desc' };
 
-  const [rows, total] = await Promise.all([
-    client.findMany({ where, orderBy, take: limit, skip: offset }),
-    client.count({ where })
-  ]);
+  let rows;
+  let total;
+  try {
+    [rows, total] = await Promise.all([
+      client.findMany({ where, orderBy, take: limit, skip: offset }),
+      client.count({ where })
+    ]);
+  } catch (error) {
+    // Some legacy HR models (e.g. Leave Allocation / HrLeaveBalance) have no
+    // createdAt column — fall back to id so the list page still loads.
+    const msg = String(error?.message || error || '');
+    if (!/Unknown argument `createdAt`|Unknown argument `updatedAt`/.test(msg)) throw error;
+    orderBy = { id: 'desc' };
+    [rows, total] = await Promise.all([
+      client.findMany({ where, orderBy, take: limit, skip: offset }),
+      client.count({ where })
+    ]);
+  }
 
   const decorated = await decorate(def, resource, rows, companyId);
   return { rows: decorated, total, limit, offset, doctype: def.doctype };
@@ -1022,8 +1038,32 @@ async function update(resource, id, req, body = {}) {
   assertCanWrite(def, resource, { ...ctx, canSeeAll: ctx.canSeeAll || row.employeeId === ctx.employeeId }, body, companyId);
 
   const status = rowStatus(def, resource, row);
+  const postSubmitEditable = new Set(def.postSubmitEditable || []);
   if (!editableStatus(def, status)) {
-    throw new HttpError(400, `${def.doctype} is ${status} and can no longer be edited. Use Cancel or Amend.`);
+    // Allow a narrow set of post-submit fields (e.g. attach Income Tax Slab on an
+    // already-submitted Salary Structure Assignment) without forcing Amend.
+    const incomingKeys = Object.keys(body || {}).filter(
+      (k) => !['id', 'companyId', 'createdAt', 'updatedAt', 'status', 'docStatus'].includes(k)
+    );
+    const onlyAllowed =
+      postSubmitEditable.size > 0 &&
+      incomingKeys.length > 0 &&
+      incomingKeys.every((k) => postSubmitEditable.has(k));
+    if (!onlyAllowed) {
+      throw new HttpError(400, `${def.doctype} is ${status} and can no longer be edited. Use Cancel or Amend.`);
+    }
+    const patch = {};
+    for (const key of incomingKeys) patch[key] = body[key];
+    let updated;
+    try {
+      updated = await client.update({ where: { id: row.id }, data: patch });
+    } catch (error) {
+      throw translatePrismaError(error, def);
+    }
+    if (def.onUpdated) await runHook(def.onUpdated, { def, resource, row: updated, previous: row, companyId, ctx, req, data: patch });
+    await writeAudit(companyId, req.user.id, 'update', resource, updated.id, `${def.doctype} (post-submit fields)`);
+    const [out] = await decorate(def, resource, [updated], companyId);
+    return out;
   }
 
   const merged = { ...row, ...body };

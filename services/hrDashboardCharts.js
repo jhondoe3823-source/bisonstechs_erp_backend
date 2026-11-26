@@ -121,10 +121,29 @@ async function claimTypeBreakup(companyId) {
 }
 
 async function salaryByEmployeeField(companyId, field) {
-  const items = await prisma.hrPayrollItem.findMany({
-    where: { companyId, period: { in: monthsBack().slice(-1).map((m) => m.key) } },
-    select: { employeeId: true, net: true }
-  });
+  const period = monthsBack().slice(-1).map((m) => m.key)[0];
+  const periodStart = period ? new Date(`${period}-01T00:00:00.000Z`) : null;
+  const slips = periodStart
+    ? await prisma.hrSalarySlip.findMany({
+        where: {
+          companyId,
+          status: { not: 'Cancelled' },
+          startDate: {
+            gte: periodStart,
+            lt: new Date(Date.UTC(periodStart.getUTCFullYear(), periodStart.getUTCMonth() + 1, 1))
+          }
+        },
+        select: { employeeId: true, netPay: true }
+      })
+    : [];
+  const items = slips.length
+    ? slips.map((s) => ({ employeeId: s.employeeId, net: s.netPay }))
+    : (
+        await prisma.hrPayrollItem.findMany({
+          where: { companyId, period: period || undefined },
+          select: { employeeId: true, net: true }
+        })
+      );
   const ids = [...new Set(items.map((i) => i.employeeId).filter(Boolean))];
   const employees = ids.length
     ? await prisma.hrEmployee.findMany({ where: { id: { in: ids } }, select: { id: true, [field]: true } })
@@ -192,7 +211,7 @@ const dashboards = {
     { label: 'Tax Exemption Declarations', chart: 'group', model: 'hrTaxExemptionDeclaration', by: 'status', where: active }
   ],
   payroll: [
-    { label: 'Outgoing Salary', chart: 'series', model: 'hrPayrollItem', dateField: 'createdAt', where: active, field: 'net', fn: 'sum' },
+    { label: 'Outgoing Salary', chart: 'series', model: 'hrSalarySlip', dateField: 'postingDate', where: active, field: 'netPay', fn: 'sum' },
     { label: 'Department Wise Salary (Last Month)', chart: 'custom', run: (companyId) => salaryByEmployeeField(companyId, 'department') },
     { label: 'Designation Wise Salary (Last Month)', chart: 'custom', run: (companyId) => salaryByEmployeeField(companyId, 'designation') }
   ]

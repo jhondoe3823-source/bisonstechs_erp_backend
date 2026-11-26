@@ -187,6 +187,8 @@ const registry = {
     model: 'hrSalaryStructureAssignment', doctype: 'Salary Structure Assignment', workspace: 'payroll',
     section: null, titleField: null, statuses: ['Draft', 'Submitted', 'Cancelled'], actions: DRAFT_FLOW,
     onSubmitted: 'syncEmployeeSalaryFromAssignment',
+    // Keep tax / payable wiring editable after submit so HR can attach slabs without Amend.
+    postSubmitEditable: ['incomeTaxSlabId', 'payableAccount', 'costCenter', 'variable', 'currency', 'notes'],
     columns: ['employeeId', 'salaryStructureId', 'base', 'fromDate', 'status'],
     search: [], employeeScoped: true,
     fields: [
@@ -330,7 +332,8 @@ const registry = {
       { n: 'salaryComponentId', l: 'Salary Component', t: 'link', o: 'salary-component', r: true },
       { n: 'type', l: 'Type of Benefit', t: 'select', o: ['cash', 'perquisite'], d: 'cash' },
       { n: 'maxAmount', l: 'Max Amount Payable (Yearly)', t: 'currency', d: 0 },
-      { n: 'maxAmountBasedOn', l: 'Max Amount Based On', t: 'select', o: ['Amount', 'Percentage of CTC'], d: 'Amount' },
+      // Prisma stores this as Float (0 = fixed Amount, >0 = % of CTC). Select labels are UI-only.
+      { n: 'maxAmountBasedOn', l: 'Max Amount Based On (% of CTC; 0 = fixed Amount)', t: 'float', d: 0 },
       { n: 'disabled', l: 'Disabled', t: 'bool', d: false }
     ]
   },
@@ -360,8 +363,11 @@ const registry = {
       { key: 'submit', label: 'Submit', from: ['Draft'], to: 'Submitted', action: 'edit' },
       { key: 'approve', label: 'Approve', from: ['Submitted'], to: 'Approved', action: 'approve' },
       { key: 'reject', label: 'Reject', from: ['Submitted'], to: 'Rejected', action: 'approve' },
+      { key: 'pay', label: 'Mark Paid', from: ['Approved'], to: 'Paid', action: 'pay' },
       { key: 'cancel', label: 'Cancel', from: ['Draft', 'Submitted', 'Approved'], to: 'Cancelled', action: 'edit' }
     ],
+    onApproved: 'applyBenefitClaimSideEffects',
+    onPaid: 'markBenefitClaimPaid',
     columns: ['employeeId', 'amount', 'claimedOn', 'status'], search: [], employeeScoped: true,
     fields: [
       EMPLOYEE,
@@ -2592,6 +2598,14 @@ const registry = {
       { key: 'cancel', label: 'Cancel', from: ['Submitted', 'Queued', 'Failed'], to: 'Cancelled', action: 'edit' },
       { key: 'amend', label: 'Amend', from: ['Cancelled'], to: 'Draft', action: 'edit' }
     ],
+    // ERPNext-like helper buttons so HR can drive the run without leaving the form.
+    buttons: [
+      { key: 'getEmployees', label: 'Get Employees', hook: 'getEmployeesForPayrollEntry' },
+      { key: 'createSalarySlips', label: 'Create Salary Slips', hook: 'createSalarySlipsForPayrollEntry' },
+      { key: 'submitSalarySlips', label: 'Submit Salary Slips', hook: 'submitSalarySlipsForPayrollEntry' }
+    ],
+    beforeWrite: 'preparePayrollEntry',
+    onSubmitted: 'generateSalarySlipsFromPayrollEntry',
     columns: ['postingDate', 'payrollFrequency', 'startDate', 'endDate', 'numberOfEmployees', 'status'],
     search: [],
     fields: [

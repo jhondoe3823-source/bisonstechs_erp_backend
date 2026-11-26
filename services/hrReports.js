@@ -15,7 +15,9 @@ const { workDateKey } = require('../utils/hrAccess');
 const { buildAttendanceReport, ymd } = require('./hrAttendanceReport');
 
 function range(query, fallbackDays = 30) {
-  const to = query.to ? new Date(`${String(query.to).slice(0, 10)}T00:00:00.000Z`) : null;
+  // Inclusive date window: from starts at 00:00 UTC, to ends at 23:59:59.999 UTC
+  // so same-day createdAt / postingDate records are not dropped.
+  const to = query.to ? new Date(`${String(query.to).slice(0, 10)}T23:59:59.999Z`) : null;
   const from = query.from ? new Date(`${String(query.from).slice(0, 10)}T00:00:00.000Z`) : null;
   if (to && Number.isNaN(to.getTime())) throw badRequest('Invalid "to" date');
   if (from && Number.isNaN(from.getTime())) throw badRequest('Invalid "from" date');
@@ -36,6 +38,7 @@ function badRequest(message) {
 }
 
 function empName(employee) {
+  if (employee?.employeeName) return String(employee.employeeName).trim();
   const user = employee?.user;
   if (!user) return employee?.employeeCode || '';
   return [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email || employee?.employeeCode || '';
@@ -57,7 +60,9 @@ const EMPLOYEE_SELECT = {
 };
 
 const EMPLOYEE_LOOKUP = {
+  id: true,
   employeeCode: true,
+  employeeName: true,
   user: { select: USER_SELECT }
 };
 
@@ -803,6 +808,57 @@ const reports = {
       { key: 'status', label: 'Status' }
     ],
     async build({ companyId, query, from, to }) {
+      // Prefer Salary Slips (standard ERP source). Fall back to legacy payroll items.
+      const slips = await prisma.hrSalarySlip.findMany({
+        where: {
+          companyId,
+          status: { not: 'Cancelled' },
+          ...(query.employeeId ? { employeeId: String(query.employeeId) } : {}),
+          ...(from || to
+            ? {
+                postingDate: {
+                  ...(from ? { gte: from } : {}),
+                  ...(to ? { lte: to } : {})
+                }
+              }
+            : {})
+        },
+        orderBy: [{ postingDate: 'asc' }, { employeeName: 'asc' }]
+      });
+      if (slips.length) {
+        const employeeIds = [...new Set(slips.map((s) => s.employeeId).filter(Boolean))];
+        const employees = employeeIds.length
+          ? await prisma.hrEmployee.findMany({
+              where: { companyId, id: { in: employeeIds } },
+              select: EMPLOYEE_LOOKUP
+            })
+          : [];
+        const byId = new Map(employees.map((e) => [e.id, e]));
+        return slips
+          .map((s) => {
+            const emp = byId.get(s.employeeId);
+            if (!emp) return null;
+            const earnings = Array.isArray(s.earnings) ? s.earnings : [];
+            const deductions = Array.isArray(s.deductions) ? s.deductions : [];
+            const taxable = earnings
+              .filter((row) => row && row.isTaxableComponent === true)
+              .reduce((sum, row) => sum + Number(row.amount || 0), 0);
+            const tax = deductions
+              .filter((row) => row && (row.isIncomeTaxComponent === true || /tax/i.test(String(row.abbr || ''))))
+              .reduce((sum, row) => sum + Number(row.amount || 0), 0);
+            return {
+              employeeCode: emp.employeeCode,
+              employeeName: empName(emp),
+              period: s.startDate ? ymd(s.startDate).slice(0, 7) : '',
+              taxable,
+              tax,
+              currency: s.currency || '',
+              status: s.status
+            };
+          })
+          .filter(Boolean);
+      }
+
       const items = await prisma.hrPayrollItem.findMany({
         where: {
           companyId,
@@ -884,6 +940,67 @@ const reports = {
       { key: 'currency', label: 'Currency' }
     ],
     async build({ companyId, query, from, to }) {
+      const declarations = await prisma.hrTaxExemptionDeclaration
+        .findMany({
+          where: { companyId, ...(query.employeeId ? { employeeId: String(query.employeeId) } : {}) },
+          select: { employeeId: true, totalExemption: true }
+        })
+        .catch(() => []);
+      const declaredByEmployee = new Map(
+        (declarations || []).map((d) => [d.employeeId, Number(d.totalExemption || 0)])
+      );
+
+      const slips = await prisma.hrSalarySlip.findMany({
+        where: {
+          companyId,
+          status: { not: 'Cancelled' },
+          ...(query.employeeId ? { employeeId: String(query.employeeId) } : {}),
+          ...(from || to
+            ? {
+                postingDate: {
+                  ...(from ? { gte: from } : {}),
+                  ...(to ? { lte: to } : {})
+                }
+              }
+            : {})
+        },
+        orderBy: [{ postingDate: 'asc' }, { employeeName: 'asc' }]
+      });
+      if (slips.length) {
+        const employeeIds = [...new Set(slips.map((s) => s.employeeId).filter(Boolean))];
+        const employees = employeeIds.length
+          ? await prisma.hrEmployee.findMany({
+              where: { companyId, id: { in: employeeIds } },
+              select: EMPLOYEE_LOOKUP
+            })
+          : [];
+        const byId = new Map(employees.map((e) => [e.id, e]));
+        return slips
+          .map((s) => {
+            const emp = byId.get(s.employeeId);
+            if (!emp) return null;
+            const earnings = Array.isArray(s.earnings) ? s.earnings : [];
+            const deductions = Array.isArray(s.deductions) ? s.deductions : [];
+            const taxable = earnings
+              .filter((row) => row && row.isTaxableComponent === true)
+              .reduce((sum, row) => sum + Number(row.amount || 0), 0);
+            const tax = deductions
+              .filter((row) => row && (row.isIncomeTaxComponent === true || /tax/i.test(String(row.abbr || ''))))
+              .reduce((sum, row) => sum + Number(row.amount || 0), 0);
+            return {
+              employeeCode: emp.employeeCode,
+              employeeName: empName(emp),
+              period: s.startDate ? ymd(s.startDate).slice(0, 7) : '',
+              gross: Number(s.grossPay || 0),
+              taxable,
+              exemptions: declaredByEmployee.get(s.employeeId) || 0,
+              tax,
+              currency: s.currency || ''
+            };
+          })
+          .filter(Boolean);
+      }
+
       const items = await prisma.hrPayrollItem.findMany({
         where: {
           companyId,
@@ -900,15 +1017,6 @@ const reports = {
         include: { employee: { select: EMPLOYEE_LOOKUP } },
         orderBy: { period: 'asc' }
       });
-      const declarations = await prisma.hrTaxExemptionDeclaration
-        .findMany({
-          where: { companyId, ...(query.employeeId ? { employeeId: String(query.employeeId) } : {}) },
-          select: { employeeId: true, totalExemption: true }
-        })
-        .catch(() => []);
-      const declaredByEmployee = new Map(
-        (declarations || []).map((d) => [d.employeeId, Number(d.totalExemption || 0)])
-      );
       return items
         .filter((i) => i.employee)
         .map((i) => {
@@ -920,7 +1028,7 @@ const reports = {
             employeeCode: i.employee.employeeCode,
             employeeName: empName(i.employee),
             period: i.period,
-            gross: Number(i.grossPay || i.gross || 0),
+            gross: Number(i.grossPay || i.gross || i.totalEarning || i.base || 0),
             taxable,
             exemptions: declaredByEmployee.get(i.employeeId) || 0,
             tax: Number(i.customTax || 0),
@@ -1190,7 +1298,7 @@ const reports = {
         }
       }
       const employeeIds = [...byEmployee.keys()];
-      const employees = employeeIds.length
+          const employees = employeeIds.length
         ? await prisma.hrEmployee.findMany({
             where: {
               companyId,
@@ -1198,6 +1306,7 @@ const reports = {
               ...(query.departmentId ? { departmentId: String(query.departmentId) } : {})
             },
             select: {
+              id: true,
               ...EMPLOYEE_LOOKUP,
               department: true,
               departmentId: true,

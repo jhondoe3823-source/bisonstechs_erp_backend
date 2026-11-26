@@ -81,13 +81,18 @@ const getEnterpriseDashboard = async (req, res) => {
       lostOpps,
       pipelineAgg,
       weightedAgg,
+      wonValueAgg,
+      oppStageGroups,
       upcomingFollowUps,
       overdueActivities,
       overdueTasks,
       todayTasks,
+      pendingTasks,
+      completedTasks,
       recentLeads,
       recentOpps,
-      recentActivities,
+      recentCrmActivities,
+      recentLeadActivities,
       leadSourceCounts,
       conversionData,
     ] = await Promise.all([
@@ -107,6 +112,13 @@ const getEnterpriseDashboard = async (req, res) => {
       prisma.crmOpportunity.count({ where: { companyId, isDeleted: false, stage: 'Lost', ...assignFilter } }),
       prisma.crmOpportunity.aggregate({ where: { companyId, isDeleted: false, stage: { notIn: ['Won', 'Lost'] } }, _sum: { expectedRevenue: true } }),
       prisma.crmOpportunity.aggregate({ where: { companyId, isDeleted: false, stage: { notIn: ['Won', 'Lost'] } }, _sum: { weightedRevenue: true } }),
+      prisma.crmOpportunity.aggregate({ where: { companyId, isDeleted: false, stage: 'Won' }, _sum: { expectedRevenue: true } }),
+      prisma.crmOpportunity.groupBy({
+        by: ['stage'],
+        where: { companyId, isDeleted: false, ...assignFilter },
+        _count: { stage: true },
+        _sum: { expectedRevenue: true },
+      }),
       // Follow-ups upcoming
       prisma.leadFollowUp.findMany({
         where: { companyId, status: 'Pending', followUpDate: { gte: now } },
@@ -120,10 +132,11 @@ const getEnterpriseDashboard = async (req, res) => {
       }),
       // Overdue activities
       prisma.crmActivity.count({ where: { companyId, status: 'Open', dueAt: { lt: now }, ...assignFilter } }),
-      // Overdue tasks
+      // Tasks
       prisma.crmTask.count({ where: { companyId, isDeleted: false, status: { notIn: ['Completed', 'Cancelled'] }, dueAt: { lt: now }, ...assignFilter } }),
-      // Today tasks
       prisma.crmTask.count({ where: { companyId, isDeleted: false, status: { notIn: ['Completed', 'Cancelled'] }, dueAt: { gte: today, lt: tomorrow }, ...assignFilter } }),
+      prisma.crmTask.count({ where: { companyId, isDeleted: false, status: { notIn: ['Completed', 'Cancelled'] }, ...assignFilter } }),
+      prisma.crmTask.count({ where: { companyId, isDeleted: false, status: 'Completed', ...assignFilter } }),
       // Recent leads
       prisma.lead.findMany({
         where: { companyId, isDeleted: false },
@@ -145,6 +158,16 @@ const getEnterpriseDashboard = async (req, res) => {
         take: 10,
         select: { id: true, type: true, subject: true, status: true, dueAt: true, createdAt: true, creator: { select: userSelect } },
       }),
+      // Lead activity feed (fallback when CRM activities empty)
+      prisma.leadActivity.findMany({
+        where: { companyId },
+        orderBy: { createdAt: 'desc' },
+        take: 12,
+        select: {
+          id: true, type: true, title: true, description: true, createdAt: true, leadId: true,
+          user: { select: userSelect },
+        },
+      }),
       // Lead sources
       prisma.lead.groupBy({ by: ['source'], where: leadWhere, _count: { source: true } }),
       // Conversion data
@@ -162,16 +185,44 @@ const getEnterpriseDashboard = async (req, res) => {
     const followUpCount   = statusMap['Follow-up']    || 0;
     const negotiationCount = statusMap['Negotiation'] || 0;
     const convertedCount  = statusMap['Converted']    || 0;
+    // Treat ERPNext "Lead" / "Open" as new bucket helpers
+    const newCount = (statusMap['New'] || 0) + (statusMap['Lead'] || 0) + (statusMap['Open'] || 0);
 
     const conversionRate = totalLeads > 0 ? +((conversionData / totalLeads) * 100).toFixed(1) : 0;
+
+    const recentActivities = (recentCrmActivities || []).map((a) => ({
+      id: a.id,
+      type: a.type,
+      title: a.subject || a.type || 'Activity',
+      description: a.creator
+        ? [a.creator.firstName, a.creator.lastName].filter(Boolean).join(' ')
+        : undefined,
+      createdAt: a.createdAt,
+    }));
+    const recentLeadFeed = (recentLeadActivities || []).map((a) => ({
+      id: a.id,
+      type: a.type,
+      title: a.title || a.type || 'Lead activity',
+      description: a.description || (a.user
+        ? [a.user.firstName, a.user.lastName].filter(Boolean).join(' ')
+        : undefined),
+      createdAt: a.createdAt,
+    }));
+    const recent = recentActivities.length ? recentActivities : recentLeadFeed;
+
+    const opportunitiesByStage = (oppStageGroups || []).map((row) => ({
+      stage: row.stage,
+      count: row._count.stage,
+      value: Number(row._sum.expectedRevenue || 0) || 0,
+    }));
 
     return res.json({
       success: true,
       data: {
         leads: {
           total: totalLeads,
-          new: statusMap['New'] || 0,
-          contacted: statusMap['Contacted'] || 0,
+          new: newCount,
+          contacted: statusMap['Contacted'] || statusMap['Replied'] || 0,
           qualified: qualifiedCount,
           unqualified: unqualifiedCount,
           nurturing: nurturingCount,
@@ -180,9 +231,9 @@ const getEnterpriseDashboard = async (req, res) => {
           followUp: followUpCount,
           negotiation: negotiationCount,
           converted: convertedCount,
-          lost: statusMap['Lost'] || 0,
+          lost: statusMap['Lost'] || statusMap['Do Not Contact'] || 0,
           statusBreakdown: leadStatusCounts.map(s => ({ status: s.status, count: s._count.status })),
-          sourceBreakdown: leadSourceCounts.map(s => ({ source: s.source, count: s._count.source })),
+          sourceBreakdown: leadSourceCounts.map(s => ({ source: s.source || 'Unknown', count: s._count.source })),
           conversionRate,
         },
         customers: { total: totalCustomers },
@@ -191,20 +242,26 @@ const getEnterpriseDashboard = async (req, res) => {
           open: openOpps,
           won:  wonOpps,
           lost: lostOpps,
-          pipelineValue:  pipelineAgg._sum.expectedRevenue || 0,
-          weightedValue:  weightedAgg._sum.weightedRevenue || 0,
+          pipelineValue:  Number(pipelineAgg._sum.expectedRevenue || 0) || 0,
+          weightedValue:  Number(weightedAgg._sum.weightedRevenue || 0) || 0,
+          wonValue: Number(wonValueAgg._sum.expectedRevenue || 0) || 0,
         },
+        opportunitiesByStage,
         activities: {
           overdue: overdueActivities,
-          recent: recentActivities,
+          recent,
         },
         tasks: {
           overdue: overdueTasks,
           today:   todayTasks,
+          pending: pendingTasks,
+          completed: completedTasks,
+          total: pendingTasks + completedTasks,
         },
         upcomingFollowUps,
         recentLeads,
         recentOpportunities: recentOpps,
+        recentActivity: recent,
       },
     });
   } catch (err) {

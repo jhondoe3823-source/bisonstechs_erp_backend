@@ -15,6 +15,7 @@
 const prisma = require('../prisma/client');
 const { normalizeClock, minutesOfDay, minutesOfDayInZone } = require('../utils/clock');
 const { attendanceStatusKey, workDateKey } = require('../utils/hrAccess');
+const payrollFlow = require('./hrPayrollFlow');
 
 function badRequest(message, extra) {
   const error = new Error(message);
@@ -518,12 +519,59 @@ async function addExtraToSlip({ slip, companyId, amount, label, kind, componentI
 
 async function applyAdditionalSalaryToPayroll({ row, companyId }) {
   const period = String(row.period || (row.fromDate ? dayStart(row.fromDate).toISOString().slice(0, 7) : ''));
-  const slip = await salarySlipFor(companyId, row.employeeId, period);
   const kind = row.additionalType === 'Deduction' ? 'deduction' : 'earning';
+  const amount = Number(row.amount || 0);
+
+  // Prefer ERPNext-style Salary Slip when a Draft slip exists for the period.
+  let periodStart = null;
+  let periodEndExclusive = null;
+  if (/^\d{4}-\d{2}$/.test(period)) {
+    const [yy, mm] = period.split('-').map(Number);
+    periodStart = dayStart(`${period}-01`);
+    periodEndExclusive = dayStart(new Date(Date.UTC(yy, mm, 1))); // next month
+  }
+  const modernSlip = await prisma.hrSalarySlip.findFirst({
+    where: {
+      companyId,
+      employeeId: row.employeeId,
+      status: 'Draft',
+      ...(periodStart
+        ? { startDate: { gte: periodStart, lt: periodEndExclusive } }
+        : {})
+    },
+    orderBy: { createdAt: 'desc' }
+  }).catch(() => null);
+
+  if (modernSlip) {
+    const earnings = Array.isArray(modernSlip.earnings) ? [...modernSlip.earnings] : [];
+    const deductions = Array.isArray(modernSlip.deductions) ? [...modernSlip.deductions] : [];
+    const line = {
+      salaryComponentId: row.salaryComponentId || null,
+      abbr: kind === 'deduction' ? 'DED' : 'ADD',
+      amount: round2(amount),
+      defaultAmount: round2(amount),
+      dependsOnPaymentDays: false,
+      sourceId: row.id
+    };
+    if (kind === 'deduction') {
+      if (!deductions.some((d) => d.sourceId === row.id)) deductions.push(line);
+    } else if (!earnings.some((e) => e.sourceId === row.id)) {
+      earnings.push(line);
+    }
+    const grossPay = round2(earnings.reduce((s, r) => s + Number(r.amount || 0), 0));
+    const totalDeduction = round2(deductions.reduce((s, r) => s + Number(r.amount || 0), 0));
+    const netPay = round2(grossPay - totalDeduction);
+    await prisma.hrSalarySlip.update({
+      where: { id: modernSlip.id },
+      data: { earnings, deductions, grossPay, totalDeduction, netPay, roundedTotal: Math.round(netPay) }
+    });
+  }
+
+  const slip = await salarySlipFor(companyId, row.employeeId, period);
   const updated = await addExtraToSlip({
     slip,
     companyId,
-    amount: Number(row.amount || 0),
+    amount,
     label: row.reason || 'Additional Salary',
     kind,
     componentId: row.salaryComponentId,
@@ -533,6 +581,37 @@ async function applyAdditionalSalaryToPayroll({ row, companyId }) {
     await prisma.hrBonus.update({ where: { id: row.id }, data: { payrollItemId: updated.id } });
   }
   return prisma.hrBonus.findFirst({ where: { id: row.id } });
+}
+
+async function preparePayrollEntry(args) {
+  return payrollFlow.preparePayrollEntry(args);
+}
+
+async function getEmployeesForPayrollEntry(args) {
+  return payrollFlow.getEmployeesForPayrollEntry(args);
+}
+
+async function createSalarySlipsForPayrollEntry(args) {
+  return payrollFlow.createSalarySlipsForPayrollEntry({ ...args, submit: false });
+}
+
+async function submitSalarySlipsForPayrollEntry(args) {
+  return payrollFlow.submitSalarySlipsForPayrollEntry(args);
+}
+
+async function generateSalarySlipsFromPayrollEntry(args) {
+  return payrollFlow.generateSalarySlipsFromPayrollEntry(args);
+}
+
+async function applyBenefitClaimSideEffects(args) {
+  return payrollFlow.applyBenefitClaimSideEffects(args);
+}
+
+async function markBenefitClaimPaid({ row }) {
+  return prisma.hrEmployeeBenefitClaim.update({
+    where: { id: row.id },
+    data: { isPaid: true, status: 'Paid' }
+  });
 }
 
 async function computeOvertimeAmount({ data, companyId }) {
@@ -1930,5 +2009,12 @@ module.exports = {
   prepareTrainingResult,
   prepareHolidayListAssignment,
   applyHolidayListAssignment,
+  preparePayrollEntry,
+  getEmployeesForPayrollEntry,
+  createSalarySlipsForPayrollEntry,
+  submitSalarySlipsForPayrollEntry,
+  generateSalarySlipsFromPayrollEntry,
+  applyBenefitClaimSideEffects,
+  markBenefitClaimPaid,
   helpers: { allocationFor, allocationRemaining, dayKeys, dayStart, nextEmployeeCode, round2 }
 };
